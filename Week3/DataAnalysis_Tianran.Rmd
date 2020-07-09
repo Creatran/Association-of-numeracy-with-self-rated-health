@@ -1,0 +1,411 @@
+---
+title: "ESP - Data Analysis"
+author: 
+- "Haojia Li"
+- "Tianran Zhang"
+- "Zihan Yang"
+date: "5/29/2020"
+output: 
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(scipen = 3, digits = 3)
+```
+
+```{r packages}
+# read data
+library(haven)
+library(readxl)
+# data manipulation
+library(tidyverse)
+# knit tables
+library(knitr)
+library(kableExtra)
+
+# Regression on weighted data
+library(survey)
+# PIAAC Regression
+library(intsvy)
+```
+
+```{r load data}
+load("../Data/ESP_reg.RData")
+load("../Data/NYS.RData")
+load("../Data/PIAAC.RData")
+```
+
+# Wrap up of the previous regression results (without weights consideration)
+**Empire State Poll (ESP)**
+
+Step-wise multivariate linear regression
+
+* Outcome: binary health status    
+* Predictor: numeracy score    
+* Covariates: education, ethincity, income, race    
+* Interaction term: education & numeracy score    
+
+
+| Outcome                | Health status 1 (Not Poor VS. Poor) | Health status 2 (Good VS. Not Good) |
+| ---------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| significant predictor  | numeracy score                                            |                                                 |
+| significant covariates | Education, ethinicity                                     | income, education                               |
+| AUC                    | 0.8123                                                    | 0.7024                                          |
+
+**Program for the International Assessment of Adult Competencies (PIAAC 2017)**     
+
+Step-wise multivariate linear regression       
+
+* Outcome: binary health status  
+* predictor: numeracy score    
+* covariates: income, race, education    
+* Interaction term: education & numeracy score    
+
+| Outcome                | Health status 1 (Not Poor VS. Poor) | Health status 2 (Good VS. Not Good) |
+| ---------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| significant predictor  | numeracy score                                  | numeracy score                                  |
+| significant covariates | income, race                                    | income, race, education                         |
+| AUC                    | 0.7524                                          | 0.7114                                          |
+
+
+
+Considering additional covariates:
+
+* Outcome: binary health status     
+* predictor: numeracy score, literacy performance, problem solving      
+* covariates: income, race, education      
+
+| Outcome                | Health status 1 (Not Poor VS. Poor) | Health status 2 (Good VS. Not Good) |
+| ---------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| significant predictor  | numeracy score                                  | numeracy score                                  |
+| significant covariates | income, race, education, problem solving        | income, race, education, problem solving        |
+| AUC                    | 0.8196                                          | 0.6920                                          |
+
+
+1. `numeracy score` is a significant predictor, `income` and `race` are significant covariates in all models;
+2. `education` is a significant covariates in all the other models except for the regression of PIAAC health_status_1 (Poor VS. Not Poor) with 4 independent variables (no additional predictors).     
+3. For additional predictors, `problem solving` is significant while `literacy` is not significant no matter which cut point to set.     
+
+# ESP
+
+## Refuse rate
+
+```{r refuse}
+# calculate the number of refuse or -1 (in JAqs) in each column
+refuse <- sapply(ESP, function(x) sum(x%in%c("Refused",-1)))
+# keep the columns that have refuse
+refuse <- refuse[which(refuse>0)]
+# append the refuse rate and create a data frame; -2 means remove `age` since it overlaps with age.cat
+refuse.df <- rbind(refuse, refuse/8) %>% as.data.frame()
+refuse.df <- refuse.df[,-2]
+# set col- and rownames
+colnames(refuse.df) <- c("Gender", "Age Level", "Education", "Race", "Ethnicity", "JAq1: Fractions", "JAq2: Percentages", "JAq3: Numerical Info")
+rownames(refuse.df) <- c("Number", "%")
+kable(refuse.df) %>% kable_styling()
+```
+
+## Relationship between numeracy score and health status
+
+```{r, fig.width=12}
+par(mfrow = c(1,2))
+plot(x=ESP$numeracy, y=ESP$JAq4, pch=19, xlab = "Numeracy Score", ylab = "Health Status Score", main = "Scatter plot of numeracy score and health status")
+boxplot(numeracy~JAq4, data = ESP, xlab = "Health Status Score", ylab = "Numeracy Score", main = "Box plot of numeracy score and health status")
+# perform one-way ANOVA test
+summary(aov(numeracy~health_status, data = ESP))
+```
+
+
+## Relationship between numeracy score and education
+
+```{r, fig.width=6, fig.align='center'}
+ESP %>%
+  filter(educ != "Refused") %>%
+  group_by(educ) %>%
+  ggplot() +
+  geom_boxplot(aes(x=educ, y=numeracy)) +
+  labs(x = NULL, title = "Box plot of numeracy score and education") +
+  theme_bw()
+# performe one-way ANOVA test
+summary(aov(numeracy~educ, data = ESP))
+```
+
+# ESP vs. NYS (with Fisher's test)
+
+```{r}
+cat.smry <- function(mat, labels = NULL) {
+  perc <- paste0(round(prop.table(mat)*100,2),"%")
+  n.perc <- paste0(mat,"(",perc,")")
+  if(is.null(labels))
+    names(n.perc) <- names(mat)
+  else
+    names(n.perc) <- labels
+  return(n.perc)
+}
+# gather all the cat.smry result for ESP sample
+ESP.smry <- c(cat.smry(table(ESP$gender)),
+              cat.smry(table(ESP$age.cat)),
+              cat.smry(table(ESP$educ)),
+              cat.smry(table(ESP$income.cat)),
+              cat.smry(table(ESP$race)),
+              cat.smry(table(ESP$hisp)))
+
+# join NYS.smry and ESP.smry together (drop levels such as "No data" and "Refused" which are unique for ESP sample by left join NYS)
+comp1 <- data.frame(Demographics = rownames(NYS), NYS = NYS$n_perc) %>%
+  left_join(data.frame(d = names(ESP.smry), ESP = ESP.smry), by = c("Demographics" = "d"))
+
+# extract counts from ESP.smry
+ESP.smry <- comp1$ESP
+ESP.n <- c()
+for(i in 1:length(ESP.smry)) {
+  n.perc <- ESP.smry[i]
+  n <- substr(n.perc, 1, unlist(gregexpr("\\(",n.perc))-1)
+  ESP.n <- c(ESP.n, n)
+}
+ESP.n <- as.numeric(ESP.n)
+# bind the counts of ESP and NYS preparing for fisher's test
+fisher.mat <- rbind(ESP.n, unlist(NYS$counts)) %>% as.matrix()
+
+
+# add subtitles of demographics
+comp1 <- rbind(c("Gender", "", ""), comp1[1:2,],
+              c("Age", "", ""), comp1[3:6,],
+              c("Education", "", ""), comp1[7:9,],
+              c("Income", "", ""), comp1[10:14,],
+              c("Race", "", ""), comp1[15:19,],
+              c("Ethnicity", "", ""), comp1[20:21,]) %>% as.data.frame()
+
+# append p-values of fisher's test
+comp1$pval <- sapply(list(1:2,3:6,7:9,10:14,15:19,20:21), 
+                     function(x){
+                       mat <- fisher.mat[,x]
+                       pval <- fisher.test(mat, simulate.p.value = T)$p.value
+                       pval <- ifelse(pval<0.001, "<0.001", round(pval,3))
+                       c(pval, rep("",length(x)))
+                       }) %>% unlist()
+
+kable(comp1, row.names = F) %>% 
+  kable_styling(full_width = F) %>%
+  row_spec(c(1,4,9,13,19,25), bold = T)
+```
+
+The first two levels of household income for NYS population are actually <$15k and $15k-50k.
+
+*Question: Do you have any suggestions about the method of how to split people with household income <$15k to <$10k and $10k-15k?*
+
+## Adding survey weights to ESP data  
+Based on the summary table above, education, income and race are three variables that have different different distributions in ESP data and NYS dataset. However, among these three variables only education is a significant covariate in previous regression results. It appears the distributions of income and race are not associated with people's health status. So, here I only add survey weights to adjust the educationl level distribution in ESP data.    
+
+*Question: Do we also need to add survey weights on income and race even though they are not significant covariates?*    
+
+**Using manual iterative solution**
+
+```{r}
+
+ESP.weighted <- ESP.reg %>%
+  filter(hisp != "Refused" & educ != "Refused") %>%
+  mutate(hisp = factor(hisp), educ = factor(educ), 
+         income.cat <- factor(income.cat), wt = 1)
+
+# This function generate survey weights automatically
+surv.wt <- function(x, w, col_pos, col_name){
+  # x: dataset of interest
+  # w: NYS percentages
+  # cpl_pos: column number of the variable to be weighted
+  # col_name: name of the variable to be weighted
+  
+  x1 <- x %>%
+    group_by_at(col_pos) %>%
+    summarise(wt = sum(wt)/nrow(x)) %>%
+    mutate(wt_new = w/wt) %>%
+    select(-wt)
+  
+  merge(x, x1, by = col_name) %>%
+    mutate(wt = wt * wt_new) %>%
+    select(-wt_new)
+}
+
+```
+
+```{r}
+# Manully input the NYS education level proportion and hispanic proportion
+
+wt.edu <- c(0.3892, 0.2777, 0.3332)
+wt.income <- c(.33, .418, .1233, .1283)
+wt.race <- c(.697, .176,0.118)
+
+ESP.weighted <- surv.wt(ESP.weighted, wt.edu, 5, "educ")
+ESP.weighted <- surv.wt(ESP.weighted, wt.income, 6, "income.cat")
+ESP.weighted <- surv.wt(ESP.weighted, wt.race, 7, "race")
+
+```
+
+
+## Regression on weighted data        
+
+**Regression with health status 1 as the outcome**   
+
+```{r}
+ESP.design <-svydesign(
+		id = ~0,
+		data = ESP.weighted ,
+		weights = ~ wt
+	)
+
+sum1 <- summary(mysvyglm <- svyglm(health_status_1 ~ hisp + educ + numeracy, ESP.design,
+                           family=quasibinomial()))
+sum1 <- data.frame(sum1$coefficients[-1, c(1, 4)])
+colnames(sum1) <- c("Estimate", "P-value")
+sum1$sig <- ifelse(sum1$`P-value` <0.05, "*", "")
+
+
+kable(sum1) %>%
+  kable_styling(full_width = F) 
+```
+
+**Regression with health status 2 as the outcome**     
+
+```{r}
+sum2 <- summary(mysvyglm <- svyglm(health_status_2 ~ hisp + educ + numeracy, ESP.design,
+                           family=quasibinomial()))
+sum2 <- data.frame(sum2$coefficients[-1, c(1, 4)])
+colnames(sum2) <- c("Estimate", "P-value")
+sum2$sig <- ifelse(sum2$`P-value` <0.05, "*", "")
+
+
+kable(sum2) %>%
+  kable_styling(full_width = F) 
+
+```
+
+**Interesting finding**  
+In the first model with health status 1 as the outcome, educational level and numeracy are significant. While in the second model with health status 2 as the outcome, ethnicity and numeracy are significant.    
+
+# ESP vs. PIAAC (education, income and ethnicity)
+
+Race is not comparable between the two samples since PIAAC combines race and ethnicity together as one variable.   
+
+- Solution: create a new variable named "hisp" indicated whether one person is hispanic or not.   
+
+The levels of the B_Q01A variable in PIAAC dataset matched the content of ISCED-97.
+
+```{r}
+PIAAC <- PIAAC %>%
+  mutate(hisp = case_when(
+    race == "Hispanic" ~ "Hispanic",
+    race %in% c("White", "Black", "Asian/pacific islander", "Other") ~ 
+      "Npn-Hispanic",
+    race == "Unknown" ~ "Unknown"))
+```
+
+
+
+```{r}
+# bind ESP and PIAAC together
+demo <- rbind(data.frame(Study = "ESP", Education = ESP$educ, 
+                         Income = ESP$income.cat, Hisp = ESP$hisp),
+              data.frame(Study = "PIAAC", Education = PIAAC$educ, 
+                         Income = PIAAC$income.cat, Hisp = PIAAC$hisp)) %>% as.data.frame()
+
+demo <- demo %>%
+  mutate(Education = factor(Education), Income = factor(Income), 
+         Hisp = factor(Hisp))
+
+# gather cat.smry results for ESP and PIAAC
+## -4 here means drop the "Refused" level in ESP$educ and the "Unknown" level in PIAAC$educ since each of them is the unique level for its study
+## if we keep these two levels, we will find that there is no p-value output of compareGroup function
+ESP.smry1 <- c(cat.smry(table(ESP$educ))[-4],cat.smry(table(ESP$income.cat)), cat.smry(table(ESP$hisp)))
+
+PIAAC.smry <- c(cat.smry(table(PIAAC$educ))[-4],cat.smry(table(PIAAC$income.cat)), cat.smry(table(PIAAC$hisp)))
+
+comp2 <- data.frame(Demographics=names(ESP.smry1), ESP=ESP.smry1, PIAAC=PIAAC.smry)
+# add subtitles of demographics
+comp2 <- rbind(c("Education", "", ""), comp2[1:3,],
+               c("Income", "", ""), comp2[4:9,],
+               c("Hisp", "", ""), comp2[10:12, ]) %>% as.data.frame()
+rownames(comp2) <- NULL
+
+# perform Fisher's test and append p-values to the data frame
+p.educ <- fisher.test(table(demo$Study, demo$Education), simulate.p.value = T)$p.value
+p.educ <- ifelse(p.educ<0.001, "0.001", round(p.educ,3))
+
+p.income <- fisher.test(table(demo$Study, demo$Income), simulate.p.value = T)$p.value
+p.income <- ifelse(p.income<0.001, "<0.001", round(p.income, 3)) 
+
+
+p.hisp <- fisher.test(table(demo$Study, demo$Hisp), simulate.p.value = T)$p.value
+p.hisp <- ifelse(p.hisp<0.001, "<0.001", round(p.hisp, 3)) 
+comp2$pval <- c(p.educ, rep("",3), p.income, rep("",6), p.hisp, rep("", 3))
+
+kable(comp2, row.names = F) %>%
+  kable_styling(full_width = F) %>%
+  row_spec(c(1,5, 12), bold = T)
+```
+
+
+## About the plausible value in PIAAC
+reference: 
+https://cran.r-project.org/web/packages/intsvy/intsvy.pdf    
+https://nces.ed.gov/training/datauser/PIAAC_04/assets/PIAAC_04.pdf    
+https://www.oecd.org/skills/piaac/piactools_16oct_for_web.pdf    
+
+PIAAC cannot provide individual-level results, because each adult answers only a small number of assessment questions. PIAAC provides reliable estimates of proficiency only at the national level, or at the level of large subgroups (e.g., females, employed, or college educated)       
+
+Plausible Values (PVs) allows PIAAC dataset information to be saved at the case level to estimate proficiency at the national or subgroup level o Each case's PVs reflect not only that individual's performance on the small number of items s/he answered, but also the performance of similar respondents on the rest of the PIAAC assessment    
+
+
+Each individual case in the PIAAC dataset has a randomly chosen set of ten plausible values (PVs) o All ten PVs must be used together to estimate proficiency, or else one understates the variability in the predicted outcomes o The randomly chosen set of PVs best represents the score distribution for a subgroup of adults    
+
+
+## Correlation between health status and numeracy score in PIAAC
+The numeracy proficiency score are calculated with the implemented function "piaac.mean.pv" in the package "intsvy". This function uses ten plausible values to calculate the mean achievement score and its standard error.    
+
+The t-test statistics are calculated using the online t-test calculator:  
+https://select-statistics.co.uk/calculators/two-sample-t-test-calculator/
+
+```{r}
+raw_PIAAC <- read_spss("./data/prgusap1_puf.sav")
+PIAAC.pv <- cbind(PIAAC[, c("educ", "income.cat", "race",
+                            "health_status_1", "health_status_2")],
+                  raw_PIAAC)
+
+pv1 <- piaac.mean.pv(pvlabel = "NUM", by = "health_status_1", data = PIAAC.pv)[-3, 1:4]
+pv1$p_val <- c("<0.001", "")
+pv1 %>%
+  kable()%>%
+  kable_styling(full_width = F)
+
+pv2 <- piaac.mean.pv(pvlabel = "NUM", by = "health_status_2", data = PIAAC.pv) [-3, 1:4]
+pv2$p_val <- c("<0.001", "")
+pv2 %>%
+  kable()%>%
+  kable_styling(full_width = F)
+
+```
+
+
+The two-sample t-test results show that numeracy score is positively associated with people's health status.   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

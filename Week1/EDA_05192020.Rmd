@@ -1,0 +1,344 @@
+---
+title: "Capstone: ESP - EDA1"
+author: 
+- "Tianran Zhang" 
+- "Haojia Li"
+- "Zihan Yang"
+
+date: "5/19/2020"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    theme: readable
+---
+
+# Question
+
+## Question 1 - weights
+Do we need to use the survey weights? If so, they should be incorporated into Table 1 of Demographics (one column for unweighted results, and a second column for weighted results) as well as in the bivariate and multivariate models.
+
+Survey weights are used for correcting for known differences between the
+sample and population due to sampling design, nonresponse, undercoverage,
+and other factors.To do so, it seems that we need to coroperate the census data in NY State.
+
+## Question 2 - numeracy scores
+How should we treat the numeracy scale? Should we treat this as a continuous variable or categorize it with a median split (high/low numeracy) or a tertile split (very low/medium/very high)?<br>
+
+In [Validation of the Subjective Numeracy Scale: Effects of Low Numeracy on Comprehension of Risk Communications and Utility Elicitations](https://ogg.osu.edu/media/documents/health_lit/SNS_Validation.pdf) and its companion paper
+[Measuring Numeracy Without a Math Test: Development of the Subjective Numeracy Scale](https://www.researchgate.net/publication/6197768_Measuring_Numeracy_Without_a_Math_Test_Development_of_the_Subjective_Numeracy_Scale), as well as [Validation of a Short, 3-Item Version of the Subjective Numeracy Scalethey](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4592371/), they all treat the numeracy scale (sum of the scores from multiple SNS questions) as a continuous variable.  <br>
+
+Other references: <br>
+[can-likert-scale-data-ever-be-continuous?](https://www.theanalysisfactor.com/can-likert-scale-data-ever-be-continuous/)
+[Likert Scale Definition and Examples](https://www.statisticshowto.com/likert-scale-definition-and-examples/)
+[can-likert-scale-data-ever-be-continuous?](https://www.theanalysisfactor.com/can-likert-scale-data-ever-be-continuous/)
+
+If not, do a descriptive analysis of the numeracy score to see what might make sense.<br>
+Also, our decision will have implications for power in the analyses.<br>
+
+
+*	Should we compare our NYS survey data with the national/international PIAAC survey data?
+
+* The data source of RVq2(Number of visits to healthcare providers) is not available.
+
+
+# Data Description
+
+## Study Population
+New York State residents age 18 and over.
+
+## Data Source
+Empire State Poll(ESP) 2019, a random-digit-dial telephone survey conducted by the Survey Research from February to April in 2019 that covers 800 completed interviews. 
+
+## Study Variables
+
+### Outcome Variables
+- JAq4: self-reported health status. <br>
+(Excellent/Very good/Good/Fair/Poor/Do not know/Refused) 
+
+### Predictor Variables
+- JAq1: rate competence related to fractions.  <br>
+(1(Never), 2, 3, 4, 5, 6(Very often), Refused)
+
+- JAq2: rate competence related to percentages.  <br>
+(1(Never), 2, 3, 4, 5, 6(Very often), Refused) 
+
+- JAq3: rate usefulness related to numerical information. <br>
+(1(Never), 2, 3, 4, 5, 6(Very often), Refused) 
+
+### Existed Covariates
+- hhinc: household income in 2018 before taxes (after coded)
+
+- educ: education level
+(None/High school incomplete/High school graduate/Technical, trade, or vocational school after high school/Some college/College graduate/Post-graduate training or professional schooling after college/Refused )
+
+- race
+
+- hisp:ethnicity
+
+### Potential Covariates
+
+- employ
+
+- age
+
+- sex?
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+# Load data
+library(haven)
+library(readxl)
+# EDA
+library(tidyverse)
+library(table1)
+library(knitr)
+# Draw ROC plot
+library(ROCR)
+library(pROC)
+# Force R not to use exponential notation (e^(-2))
+options("digits"=3) # maintain 3 digits
+```
+
+
+```{r results='hide'}
+######################################
+#                                   #
+#       Data Preparation            #
+#                                   #
+######################################
+# Set working directory
+# path <- "/Users/zihanyang/Documents/Capstone/Programming/Capstone_ESP/Data"
+# setwd(path)
+dat_orignal <- read_xlsx("../Data/ESP19 JA - Alldata.xlsx")
+colnames(dat_orignal)
+dat <- dat_orignal %>%
+  select(age, educ, hisp, nysregion, employ, JAq1, JAq2, JAq3, JAq4)
+```
+
+
+```{r race}
+# preprocessing race
+race <- dat_orignal[which(regexpr("race", colnames(dat_orignal))==1)]
+race[is.na(race)] = 0
+colnames(race) <- c("white", "black", "natam", "asian", "other")
+
+race <- race %>%
+  mutate(count = white+black+natam+asian+other,
+         race = case_when(
+           count >= 2 ~ "More than 1 race",
+           count <= 0 | other == 1 ~ "Other",
+           white == 1 ~ "White",
+           black == 1 ~ "Black",
+           natam == 1 ~ "Natam",
+           asian == 1 ~ "Asian"),
+         race = factor(race, levels = c("White", "Black", "Asian", "Natam", "More than 1 race", "Other")))
+
+dat$race <- race$race
+```
+
+```{r}
+# preprocessing income
+income <- dat_orignal[, c("hhinc")]
+income <- income %>%
+  mutate(income = case_when(
+    is.na(hhinc) ~ -1, 
+    hhinc==1 ~ 1,
+    hhinc%in%c(2:5) ~ 2,
+    hhinc%in%c(6:7) ~ 3,
+    hhinc==8 ~ 4,
+    hhinc==9 ~ 5
+  )) %>%
+  mutate(income = factor(income, levels = c(1:5,-1), labels = c("<$10k", "$10k-$50k", "$50k-$100k", "$100k-$150k", "$150k+", "No Data")))
+  
+dat$income = income$income
+```
+
+
+```{r}
+# recode some factors
+# sum(dat < 0, na.rm = T)
+dat <- dat %>%
+  mutate(age = ifelse(age == -1, "Missing Data", ifelse(age < 25, "18-24", ifelse(age <45, "25-44",
+                      ifelse(age < 65, "45-64", "65+")))),
+         nysregion = factor(nysregion, levels = c(2, 1), labels = c("Upstate", "Downstate")),
+         employ = factor(employ, levels = c(1:5, -1), labels = c("Yes", "No", "Retired", "Disabled", 
+                                                         "Unable to work", "Refused")),
+         #JAq1 = factor(JAq1, levels = c(1:6, -1), labels = c("Never", 2:5, "Very often", "Refused")), 
+         #JAq2 = factor(JAq2, levels = c(1:6, -1), labels = c("Never", 2:5, "Very often", "Refused")), 
+         #JAq3 = factor(JAq3, levels = c(1:6, -1), labels = c("Never", 2:5, "Very often", "Refused")), 
+         JAq4 = factor(JAq4, levels = 1:5, labels = c("Excellent", "Very good", "Good", "Fair", "Poor")),
+         educ = factor(educ, levels = c(1:7, -1), 
+                       labels = c("None, or grades 1-8",
+                                  "High school incomplete (grades 9-11)", 
+                                  "High school graduate (grade 12 or GED certificate)",
+                                  "Technical, trade, or vocational school after high school", 
+                                  "Some college, no 4-year degree (including 2-year associated)", 
+                                  "College graduate (BS, BA, or other 4-year degree)", 
+                                  "Post-graduate training or professional schooling after college",
+                                  "Refused")), 
+         hisp = factor(hisp, levels = c(1, 0, -1), labels = c("Yes", "No", "Refused")))
+```
+
+# Baseline analysis
+```{r}
+# Generate table1
+table1(~ age + educ + income + race + hisp + nysregion + employ + JAq1 + JAq2 + JAq3 + JAq4, data = dat)
+```
+```{r, fig.width=12}
+# Distribution of SNS's
+par(mfrow = c(1,3))
+hist(dat$JAq1, main = "Histogram of JAq1 Score", xlab = "JAq1 Score")
+hist(dat$JAq2, main = "Histogram of JAq2 Score", xlab = "JAq2 Score")
+hist(dat$JAq3, main = "Histogram of JAq3 Score", xlab = "JAq3 Score")
+```
+
+# Regression Analysis 
+```{r}
+# Calculate numeracy score
+numeracy <- dat_orignal %>%
+  select(JAq1, JAq2, JAq3)
+numeracy[is.na(numeracy)] = 0
+
+numeracy <- numeracy %>% 
+  mutate(score = JAq1 + JAq2 + JAq3)  %>%
+  select(score)
+hist(numeracy$score, main =  "Histogram of Numeracy Score(JAq1+JAq2+JAq3)", xlab = "Numeracy Score")
+```
+
+## Correlation matrix 
+Using non-parametric Spearman's rho
+```{r}
+cor_spearman <- function(x){
+  a <- cor.test(unlist(dat_orignal[x]), numeracy$score, method = "spearman", use = "complete.obs")
+  data.frame(rho = a$estimate, p_val = a$p.value, row.names = x)
+}
+
+kable(do.call(rbind.data.frame, lapply(c("age", "educ", "hhince"), cor_spearman)))
+```
+
+Conduct correlation test between numeracy score with three ordinal demographic variables (age, education and income) based on Spearman's rank-order correlation coefficient. It seems like these three variables all have significant association with numeracy score.
+
+## Ordinal logistic regression 
+**Univariate ordinal logistic regression**   
+
+```{r}
+# Take a look at the score quantile
+quantile(numeracy$score, na.rm = T)
+
+# Dichotomize numeracy score into binary predictor
+numeracy <- numeracy %>%
+  mutate(numeracy = ifelse(score >= 15, "high", "low")) 
+
+# Use dat2 for logistic regression
+dat2 <- dat %>%
+  select(educ, hisp, race, income)
+dat2$numeracy = numeracy$numeracy
+dat2$health1 = ifelse(dat_orignal$JAq4<=4, 1, 0)
+dat2$health2 = ifelse(dat_orignal$JAq4<=3, 1, 0)
+sum(dat2$health1 == 1)
+sum(dat2$health2 == 1)
+```
+
+
+-------------------------------------------------------------------------------------------------
+Here raises one question: how to dichotomize self-reported health status into binary health outcome? 
+1. Set the cut-point at JAq4 <= 4 
+2. Set the cut-point at JAq4 <= 3
+/
+JAq4:
+  1	Excellent			
+  2	Very good			
+  3	Good			
+  4	Fair			
+  5	Poor
+/
+The regression results are slightly different bwtween these two settings. Overall we have:
+Situation 1: auc = 0.8 
+Situation 2: auc = 0.7 
+-------------------------------------------------------------------------------------------------
+
+
+```{r}
+univ <- function(var){
+  form = formula(paste0("health ~ ", var))
+  logit = glm(form, data = dat2, family = "binomial")
+  OR = data.frame(exp(cbind(OR = coef(logit), confint(logit))))[-1, ]
+  OR = cbind(OR, coef(summary(logit))[-1, 4])
+  colnames(OR) <- c("OR", "2.5%", "97.5%", "p-val")
+  return(OR)
+}
+
+
+varlist <- c("numeracy", "educ", "income", "race", "hisp")
+univ_summary <- do.call(rbind.data.frame, lapply(varlist, univ))
+univ_summary$sig <- ifelse(univ_summary$`p-val` < 0.05, "*", "")
+kable(univ_summary)
+```
+
+
+The univariate results show that only numeracy, education, hisp is significant predictors for health outcome.
+
+**Multivariate ordinal logistic regression**      
+* Cutpoint at 4
+```{r, warning=FALSE}
+paste0(colnames(dat2), collapse = " + ")
+full1 <- glm(health1 ~ educ + hisp + race + income + numeracy + educ:numeracy, 
+             data = dat2, family = "binomial")
+final1 <- step(full1, direction = "both", trace = 0)
+multi_summary1 <- exp(cbind(coef(final1), confint(final1))[-1, ]) %>% as.data.frame()
+colnames(multi_summary1)[1] <- "OR"
+multi_summary1$sig <- ifelse(summary(final1)$coefficients[-1, 4] < 0.05, "*", "")
+kable(multi_summary1)
+```
+
+
+Multivariate regression model was conducted with predictors selected by step-wise method. The final model has three predictors (educ, hisp and numeracy). This is consistent with the univariate regression results.  The AUC is 0.8123 with ROC curve shown below.
+
+```{r, message=FALSE}
+# ROC curve
+rocplot <- function(truth, pred, ...){
+  predob = prediction(pred, truth)
+  perf = performance(predob, "tpr", "fpr")
+  plot(perf, colorize=F, ...) 
+  area = auc(truth, pred)
+  area = format(round(area, 4), nsmall = 4)
+  text(x = .8, y = .1, labels = paste("AUC = ", area))
+  segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "gray", lty = 2)
+}
+
+rocplot(dat2$health1, predict.glm(final1, dat2, type = "response"), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+
+  
+```{r, warning=FALSE}
+full2 <- glm(health2 ~ educ + hisp + race + income + numeracy + educ*numeracy,
+            data = dat2, family = "binomial")
+final2 <- step(full2, direction = "both", trace = 0)
+multi_summary2 <- exp(cbind(coef(final2), confint(final2))[-1, ]) %>% as.data.frame()
+colnames(multi_summary2)[1] <- "OR"
+multi_summary2$sig <- ifelse(summary(final2)$coefficients[-1, 4] < 0.05, "*", "")
+kable(multi_summary2)
+```
+
+
+Multivariate regression model was conducted with predictors selected by step-wise method. The final model has three predictors (educ, hisp and numeracy). This is consistent with the univariate regression results.  The AUC is 0.8123 with ROC curve shown below.
+
+```{r, message=FALSE}
+# ROC curve
+
+rocplot(dat2$health2, predict.glm(final2, dat2, type = "response"), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+
+
+
+
+
+
+
+

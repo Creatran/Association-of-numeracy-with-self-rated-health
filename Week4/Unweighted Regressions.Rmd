@@ -1,0 +1,377 @@
+---
+title: "Unweighted Regressions"
+author: "Tianran Zhang"
+date: "6/6/2020"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(knitr)
+library(kableExtra)
+
+# data manipulation
+library(tidyverse)
+
+# Draw ROC plot
+library(ROCR)
+library(pROC)
+library(simr)
+```
+
+```{r results='hide'}
+load("../Data/PIAAC.RData")
+load("../Data/ESP.RData")
+```
+
+# Investigae the association between numeracy and self-reported health status 
+## Regression analysis for ESP
+
+**Step-wise multivariate linear regression**    
+* Outcome: binary health status     
+
+1. Original Levels (Multi-level/Excellent/Very good/Good/Fair/Poor/Unknown)
+
+2. Health status 1(Binary): Not Poor VS. Poor
+
+3. Health status 2 (Binary): Good VS. Not Good
+
+* Predictor: numeracy score    
+* Covariates: education, ethincity, income, race    
+* Interaction term: education & numeracy score    
+
+### Health status 1(Binary): Not Poor VS. Poor
+```{r, warning=FALSE}
+ESP$health_status_1 <- relevel(ESP$health_status_1, ref = "Not Poor")
+full1 <- glm(health_status_1 ~ numeracy + educ + hisp + race +
+               income.cat + educ:numeracy, data = ESP, 
+             family = "binomial")
+final1 <- step(full1, direction = "both", trace = 0)
+multi_summary1 <- exp(cbind(coef(final1), confint(final1))[-1, ]) %>% as.data.frame()
+colnames(multi_summary1)[1] <- "OR"
+multi_summary1$sig <- ifelse(summary(final1)$coefficients[-1, 4] < 0.05, "*", "")
+
+# power calculation
+powerSim(final1, nsim = 100,  progress = FALSE)
+
+kable(multi_summary1) %>%
+  kable_styling()
+```
+
+
+Step-wise multivariate regression model was conducted. The final model has four variables (educ, hisp, income and numeracy). The AUC is 0.8196 with ROC curve shown below.
+
+```{r, message=FALSE}
+# ROC curve
+rocplot <- function(truth, pred, ...){
+  predob = prediction(pred, truth)
+  perf = performance(predob, "tpr", "fpr")
+  plot(perf, colorize=F, ...) 
+  area = auc(truth, pred)
+  area = format(round(area, 4), nsmall = 4)
+  text(x = .8, y = .1, labels = paste("AUC = ", area))
+  segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "gray", lty = 2)
+}
+
+rocplot(ESP$health_status_1, predict.glm(final1, ESP, type = "response"), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+
+### Health status 2 (Binary): Good VS. Not Good
+
+```{r, warning=FALSE}
+ESP$health_status_2 <- relevel(ESP$health_status_2, ref = "Good")
+full2 <- glm(health_status_2 ~ numeracy + educ + hisp + race + 
+               income.cat + educ*numeracy, data = ESP, 
+             family = "binomial")
+
+final2 <- step(full2, direction = "both", trace = 0)
+multi_summary2 <- exp(cbind(coef(final2), confint(final2))[-1, ]) %>% as.data.frame()
+colnames(multi_summary2)[1] <- "OR"
+multi_summary2$sig <- ifelse(summary(final2)$coefficients[-1, 4] < 0.05, "*", "")
+
+
+# power calculation
+powerSim(final2, nsim = 100, progress = FALSE)
+
+kable(multi_summary2) %>%
+  kable_styling()
+```
+
+
+Step-wise multivariate regression model was conducted. The final model has four predictors (educ, hisp, numeracy, and the interaction term between education and numeracy). The AUC is 0.9327 with ROC curve shown below.
+
+```{r, message=FALSE}
+# ROC curve
+rocplot(ESP$health_status_2, predict.glm(final2, ESP, type = "response"), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+
+## Regression Analysis for PIAAC data    
+
+Step-wise multivariate linear regression       
+
+* Outcome: binary health status  
+* predictor: numeracy score    
+* covariates: income, race, education    
+* Interaction term: education & numeracy score    
+
+### Health status 1(Binary): Not Poor VS. Poor
+
+```{r}
+PIAAC_clean <- PIAAC %>%
+  filter(health_status != "Unknown") %>%
+  mutate(health_status_1 = factor(health_status_1),
+         health_status_2 = factor(health_status_2))
+PIAAC_clean$race[PIAAC_clean$race == "Unknown"] = "Other"
+PIAAC_clean$race <- factor(PIAAC_clean$race)
+```
+  
+```{r, warning=FALSE}
+full1 <- glm(health_status_1 ~ numeracy + educ + income.cat + race + educ * numeracy, data = PIAAC_clean, family = "binomial")
+final1 <- step(full1, direction = "both", trace = 0)
+multi_summary1 <- exp(cbind(coef(final1), confint(final1))[-1, ]) %>% as.data.frame()
+colnames(multi_summary1)[1] <- "OR"
+multi_summary1$sig <- ifelse(summary(final1)$coefficients[-1, 4] < 0.05, "*", "")
+
+# power calculation
+powerSim(final1, nsim = 100, progress = FALSE)
+
+kable(multi_summary1) %>%
+  kable_styling()
+```
+
+Step-wise multivariate regression model was conducted on PIAAC data. The final model has three predictors (numeracy, income and race). The AUC is 0.7469 with ROC curve shown below.
+
+```{r, message=FALSE}
+# ROC curve
+
+rocplot(PIAAC_clean$health_status_1, predict.glm(final1, PIAAC_clean, type = "response", na.action = na.omit), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+
+### Health status 2(Binary): Good VS. Not Good
+
+
+```{r, warning=FALSE}
+full2 <- glm(health_status_2 ~ numeracy + educ + income.cat + race +
+               numeracy * educ, data = PIAAC_clean, family = "binomial")
+final2 <- step(full2, direction = "both", trace = 0)
+multi_summary2 <- exp(cbind(coef(final2), confint(final2))[-1, ]) %>%
+  as.data.frame()
+colnames(multi_summary2)[1] <- "OR"
+multi_summary2$sig <- ifelse(summary(final2)$coefficients[-1, 4] < 0.05, "*", "")
+
+# power calculation
+powerSim(final2, nsim = 100, progress = FALSE)
+
+kable(multi_summary2) %>%
+  kable_styling()
+```
+
+Step-wise multivariate regression model was conducted. The final model has four predictors (numeracy, education, income and race). The AUC is 0.7098 with ROC curve shown below.
+
+```{r}
+rocplot(PIAAC_clean$health_status_2, predict.glm(final2, PIAAC_clean, type = "response", na.action = na.omit), title = "ROC plot")
+title(main = "ROC plot")
+
+```
+
+
+## Considering the additional predictors in PIAAC: Literacy, Problem solving abilities.    
+### Health status 1(Binary): Not Poor VS. Poor   
+* Outcome: health_status_1         
+  Poor: health score >=5;    
+  Not Poor: health score < 5.    
+* Predictor: numeracy score        
+* Covariates: education, income, race, literacy and problem solving.    
+
+
+```{r}
+PIAAC_clean2 <- na.omit(PIAAC_clean) 
+```
+
+
+```{r, warning=FALSE}
+full3 <- glm(health_status_1 ~ numeracy + educ + income.cat + race +
+               literacy + problem_solving, 
+             data = PIAAC_clean[complete.cases(PIAAC_clean), ], 
+             family = "binomial")
+final3 <- step(full3, direction = "both", trace = 0)
+multi_summary3 <- exp(cbind(coef(final3), confint(final3))[-1, ]) %>%
+  as.data.frame()
+colnames(multi_summary3)[1] <- "OR"
+multi_summary3$sig <- ifelse(summary(final3)$coefficients[-1, 4] < 0.05, "*", "")
+
+# power calculation
+powerSim(final3, nsim = 100, progress = FALSE)
+
+kable(multi_summary3) %>%
+  kable_styling()
+```
+
+Step-wise multivariate regression model was conducted. The final model has five predictors (numeracy, educ, income, race and problem solving). The AUC is 0.8198 with ROC curve shown below.
+
+```{r}
+rocplot(PIAAC_clean2$health_status_1, predict.glm(final3, PIAAC_clean2, type = "response", na.action = na.omit), title = "ROC plot")
+title(main = "ROC plot")
+
+```
+
+
+
+### Health status 2(Binary): Good VS. Not Good
+
+```{r, warning=FALSE}
+full4 <- glm(health_status_2 ~ numeracy + educ + income.cat + race +
+               literacy + problem_solving, 
+             data = PIAAC_clean[complete.cases(PIAAC_clean), ], 
+             family = "binomial")
+final4 <- step(full4, direction = "both", trace = 0)
+multi_summary4 <- exp(cbind(coef(final4), confint(final4))[-1, ]) %>%
+  as.data.frame()
+colnames(multi_summary4)[1] <- "OR"
+multi_summary4$sig <- ifelse(summary(final4)$coefficients[-1, 4] < 0.05, "*", "")
+
+# power calculation
+powerSim(final4, nsim = 100, progress = FALSE)
+
+kable(multi_summary4) %>%
+  kable_styling()
+```
+
+Step-wise multivariate regression model was conducted. The final model has five predictors (numeracy, educ, income, race and problem_solving). The AUC is 0.6907 with ROC curve shown below.   
+```{r}
+rocplot(PIAAC_clean2$health_status_2, predict.glm(final4, PIAAC_clean2, type = "response", na.action = na.omit), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+
+### Summary 
+
+**Empire State Poll (ESP)**
+
+Step-wise multivariate linear regression
+
+* Outcome: binary health status    
+1. Original Levels (Multi-level/Excellent/Very good/Good/Fair/Poor/Unknown)
+
+2. Health status 1(Binary): Not Poor VS. Poor
+
+3. Health status 2 (Binary): Good VS. Not Good
+
+* Predictor: numeracy score    
+* Covariates: education, ethincity, income, race    
+* Interaction term: education & numeracy score    
+
+
+| Outcome                | Health status 1 (Not Poor VS. Poor) | Health status 2 (Good VS. Not Good) |
+| ---------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| significant predictor  | numeracy score                                            |                                                 |
+| significant covariates | Education, ethinicity                                     | income, education                               |
+| AUC                    | 0.8196                                                    | 0.9327                                          |
+| Power                    |          55.00% (44.73, 64.97)                                 |             100.0% (96.38, 100.0)          |
+**Program for the International Assessment of Adult Competencies (PIAAC 2017)**     
+
+Step-wise multivariate linear regression       
+
+* Outcome: binary health status  
+* predictor: numeracy score    
+* covariates: income, race, education    
+* Interaction term: education & numeracy score    
+
+| Outcome                | Health status 1 (Not Poor VS. Poor) | Health status 2 (Good VS. Not Good) |
+| ---------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| significant predictor  | numeracy score                                  | numeracy score                                  |
+| significant covariates | income, race                                    | income, race, education                         |
+| AUC                    | 0.7469                                          | 0.7098                                          |
+| Power                    |          100.0% (96.38, 100.0)                               |             100.0% (96.38, 100.0)                            |
+
+
+Considering additional covariates:
+
+* Outcome: binary health status     
+* predictor: numeracy score, literacy performance, problem solving      
+* covariates: income, race, education      
+
+| Outcome                | Health status 1 (Not Poor VS. Poor) | Health status 2 (Good VS. Not Good) |
+| ---------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| significant predictor  | numeracy score                                  | numeracy score                                  |
+| significant covariates | income, race, education, problem solving        | income, race, education, problem solving        |
+| AUC                    |          0.8198                                 |             0.6907                              |
+| Power                    |          100.0% (96.38, 100.0)                              |              54.00% (43.74, 64.02)                              |
+
+
+1. `numeracy score` is a significant predictor, `income` and `race` are significant covariates in all models;
+2. `education` is a significant covariates in all the other models except for the regression of PIAAC health_status_1 (Poor VS. Not Poor) with 4 independent variables (no additional predictors).     
+3. For additional predictors, `problem solving` is significant while `literacy` is not significant no matter which cut point to set.     
+
+
+
+# Binary visits to doctors outcome
+## Regression analysis for ESP data
+
+**Step-wise multivariate linear regression**    
+
+* Outcome: binary visits to doctors      
+
+1. Original Levels (Never/1-2 times/Once every few months/Once a month/Twice a month/Once a week/2-3 times a week)      
+```{r}
+quantile(ESP$RVq2)
+table(ESP$RVq2)
+```
+
+2. Visit status (Binary): Not often (#visits <=2) VS. Often (#visits >= 3)    
+
+* Predictor: numeracy score    
+* Covariates: education, ethincity, income, race    
+* Interaction term: education & numeracy score    
+
+```{r, warning=FALSE}
+ESP$visit_often <- factor(ifelse(ESP$RVq2 >=3, 1, 0))
+
+full1 <- glm(visit_often ~ numeracy + educ + hisp + race + income.cat + 
+               educ:numeracy, data = ESP, 
+             family = "binomial")
+final1 <- step(full1, direction = "both", trace = 0)
+multi_summary1 <- exp(cbind(coef(final1), confint(final1))[-1, ]) %>% as.data.frame()
+colnames(multi_summary1)[1] <- "OR"
+multi_summary1$sig <- ifelse(summary(final1)$coefficients[-1, 4] < 0.05, "*", "")
+
+# power calculation
+powerSim(final1, nsim = 100, progress = FALSE)
+
+kable(multi_summary1) %>%
+  kable_styling()
+```
+
+
+Multivariate regression model was conducted with predictors selected by step-wise method. The final model has four predictors (educ, hisp, race and numeracy). The AUC is 0.6348 with ROC curve shown below.
+
+```{r, message=FALSE}
+rocplot(ESP$visit_often, predict.glm(final1, ESP, type = "response"), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+
+
+
+### Summary 
+| Outcome                | Visit to doctors (Not Often VS. Often) |
+| ---------------------- | -------------------------------------- |
+| significant predictor  |                                        |
+| significant covariates | education, ethnicity, race             |
+| AUC                    | 0.6348                                 |
+|Power (for efucational status) | 48.00% (37.90, 58.22) |
+
+
+
+

@@ -1,0 +1,266 @@
+---
+title: "Regressions_very_good"
+author: "Tianran Zhang"
+date: "6/22/2020"
+output:
+  word_document:
+    toc: yes
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(knitr)
+library(kableExtra)
+# data manipulation
+library(tidyverse)
+
+# Draw ROC plot
+library(ROCR)
+library(pROC)
+library(simr)
+```
+
+```{r results='hide'}
+load("../Data/ESP_reg.RData")
+ESP.reg$health_status_verygood <- 
+  ifelse(ESP.reg$health_status %in% c("Excellent", "Very Good"),
+         "Very Good", "Not Very Good")
+ESP.reg$health_status_verygood <- as.factor(ESP.reg$health_status_verygood)
+```
+
+
+# Empire State Poll (ESP)
+
+## Investigate the association between numeracy and self-reported health status 
+
+* Outcome: binary health status     
+
+1. Original Levels (Multi-level/Excellent/Very good/Good/Fair/Poor/Unknown)
+
+2. Health status (Binary):  Good VS. Not Very Good
+
+* Predictor: numeracy score    
+* Covariates: gender, age, education, income, race, ethincity    
+* Interaction term: education & numeracy score  
+
+### Univariate Regressions
+```{r}
+univ <- function(var, y, dat){
+  form = formula(paste0(y, " ~ ", var))
+  logit = glm(form, data = dat, family = "binomial")
+  OR = data.frame(exp(cbind(OR = coef(logit), confint(logit))))[-1, ]
+  OR = cbind(var, OR, coef(summary(logit))[-1, 4])
+  colnames(OR) <- c("Covariate", "OR", "2.5%", "97.5%", "p-val")
+  OR$sig <- ifelse(OR$`p-val` < 0.05, "*", "")
+  return(OR)
+}
+
+varlist1 <- c("numeracy", "gender", "age.cat", "educ",
+              "income.cat", "race", "hisp")
+univ_summary1 <- do.call(rbind.data.frame, 
+                        lapply(varlist1, univ, 
+                               y = "health_status_verygood", 
+                               dat = ESP.reg))
+univ_summary1 %>%
+  kable() %>%
+  kable_styling()
+
+sig.var <- univ_summary1 %>%
+  filter(`p-val` < 0.05) %>%
+  select(Covariate) 
+sig.var <- unique(sig.var$Covariate)
+sig.var <- paste0(sig.var, collapse = ', ')
+```
+
+Based on the summary table above, `r length(sig.var)` variables are significant covariates of people's health status `r sig.var`.   
+
+### Multivariate Regressions
+```{r}
+n <- nrow(ESP.reg)
+
+set.seed(135)
+id <- sample(n, n * .6)
+ESP.training <- ESP.reg[id, ]
+ESP.test <- ESP.reg[-id, ]
+```
+**Unweighted Regressions**
+```{r, warning=FALSE}
+#ESP.reg$health_status_verygood <- relevel(ESP.reg$health_status_verygood,ref = "Very Good")
+full1 <- glm(health_status_verygood ~ numeracy + gender + age.cat +
+               educ + income.cat + race + hisp+
+               educ:numeracy, data = ESP.reg, family = "binomial")
+final1 <- step(full1, direction = "both", trace = 0)
+# summary(final1)
+fit1 <- glm(health_status_verygood ~ numeracy + age.cat + educ +
+              income.cat, data = ESP.reg, family = "binomial")
+
+multi_summary1 <- exp(cbind(coef(fit1), confint(fit1))[-1, ]) %>% as.data.frame()
+colnames(multi_summary1)[1] <- "OR"
+multi_summary1$sig <- ifelse(summary(fit1)$coefficients[-1, 4] < 0.05, "*", "")
+
+kable(multi_summary1) %>%
+  kable_styling()
+# power calculation
+power1 <- powerSim(final1, nsim = 100,  progress = FALSE)
+auc1 <- auc(ESP.reg$health_status_verygood, predict.glm(fit1, ESP.reg, type = "response"))
+
+# Calculate error rate
+fit1.train <- glm(health_status_verygood ~ numeracy + age.cat + educ +
+              income.cat, data = ESP.training, family = "binomial")
+pred1 <- predict(fit1.train, ESP.test, type = "response")
+pred1 <- ifelse(pred1 > .5, "Very Good", "Not Very Good")
+err1 <- mean(pred1 != ESP.test$health_status_verygood)
+```
+
+
+Step-wise selection method was conducted. The final model has four significant predictors: numeracy, age, education, and income. The power for our final model is `r power1$x/power1$n`, with an AUC of `r auc1[1]`. The prediction error rate is `r round(err1, 3)`. 
+
+```{r, message=FALSE}
+# ROC curve
+rocplot <- function(truth, pred, ...){
+  predob = prediction(pred, truth)
+  perf = performance(predob, "tpr", "fpr")
+  plot(perf, colorize=F, ...) 
+  area = auc(truth, pred)
+  area = format(round(area, 4), nsmall = 4)
+  text(x = .8, y = .1, labels = paste("AUC = ", area))
+  segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "gray", lty = 2)
+}
+
+rocplot(ESP.reg$health_status_verygood, predict.glm(fit1, ESP.reg, type = "response"), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+**Weighted Regressions**     
+Based on the comparison table between ESP and NYS, education, income and race are three variables that have different different distributions in ESP data and NYS dataset. Add weights to adjust the proportion of these three variables and refit the multi-regression model, education and income are significant covariates. So, we only add weights to adjust the proportion of education and income. Weights are calculated based on manual iterative solution.  
+
+```{r}
+# This function generate survey weights automatically
+surv.wt <- function(x, w, col_name){
+  # x: dataset of interest
+  # w: NYS percentages
+  # cpl_pos: column number of the variable to be weighted
+  # col_name: name of the variable to be weighted
+  #x <- ESP.weighted; w <- wt.edu; col_pos<- 5; col_name <- "educ"
+  col_pos <- which(colnames(x) == col_name)
+  x1 <- x %>%
+    group_by_at(col_pos) %>%
+    summarise(wt = sum(wt)/nrow(x)) %>%
+    mutate(wt_new = w/wt) %>%
+    select(-wt)
+  
+  merge(x, x1, by = col_name) %>%
+    mutate(wt = wt * wt_new) %>%
+    select(-wt_new)
+}
+
+# This function check if weighted ESP is significant different 
+# compared to NYS
+
+fisher.sig <- function(x, col_name, w2){
+  col_pos <- which(colnames(x) == col_name)
+  x1 <- x %>%
+    group_by_at(col_pos) %>%
+    summarise(w = sum(wt))
+  fisher.test(matrix(c(x1$w, w2), byrow = T, ncol = length(w2)),
+              simulate.p.value = T)$p.value
+}
+
+```
+
+```{r}
+# Manully input the NYS education level proportion and hispanic proportion
+
+ESP.weighted <- ESP.reg %>%
+  mutate(wt = 1)
+
+wt.educ <- c(97506, 69577, 83478)
+wt.income <- c(51303, 64932, 19158, 19930)
+wt.race <- c(13559, 3424, 2471)
+
+# 1st iterative
+ESP.weighted <- surv.wt(ESP.weighted, wt.educ/sum(wt.educ), "educ")
+ESP.weighted <- surv.wt(ESP.weighted, wt.income/sum(wt.income), "income.cat")
+# ESP.weighted <- surv.wt(ESP.weighted, wt.race/sum(wt.race), "race")
+
+# Check p-values for fisher.tests
+# fisher.sig(ESP.weighted, "educ", wt.educ)
+# fisher.sig(ESP.weighted, "income.cat", wt.income)
+# fisher.sig(ESP.weighted, "race", wt.race)
+```
+
+
+```{r, warning=FALSE}
+full2 <- glm(health_status_verygood ~ numeracy + gender + age.cat +
+               educ + income.cat + race + hisp, weights = wt, 
+             data = ESP.weighted, family = "binomial")
+final2 <- step(full2, direction = "both", trace = 0)
+# summary(final2)
+fit2 <- glm(health_status_verygood ~ numeracy + age.cat +
+               educ + income.cat + hisp, weights = wt, 
+             data = ESP.weighted, family = "binomial")
+fit2.unweight <- glm(health_status_verygood ~ numeracy + age.cat +
+               educ + income.cat +hisp, 
+               data = ESP.weighted, family = "binomial")
+
+multi_summary2 <- exp(cbind(coef(fit2), confint(fit2))[-1, ]) %>% as.data.frame()
+colnames(multi_summary2)[1] <- "OR"
+multi_summary2$sig <- ifelse(summary(fit2)$coefficients[-1, 4] < 0.05, "*", "")
+
+# power calculation
+power2 <- powerSim(fit2, sim = fit2.unweight, nsim = 1000,  
+                   progress = FALSE)
+auc2 <- auc(ESP.weighted$health_status_verygood, predict.glm(fit2, ESP.weighted, weights = wt, type = "response"))
+
+kable(multi_summary2) %>%
+  kable_styling()
+# lastResult()$error
+
+# Calculate error rate
+fit2.train <- glm(health_status_verygood ~ numeracy + age.cat +
+               educ + income.cat +hisp, weights = wt, 
+             data = ESP.weighted[id, ], family = "binomial")
+pred2 <- predict(fit2.train, ESP.test, type = "response")
+pred2 <- ifelse(pred2 > .5, "Very Good", "Not Very Good")
+err2 <- mean(pred2 != ESP.test$health_status_verygood)
+```
+
+Step-wise selection method was conducted. Since race is not significant after adding weights, we only add weights to adjust the porportion of `education` and `income`. The final model has five significant predictors: numeracy, age, education, income, and ethnicity. The power for this weighted model is `r power2$x/power1$n`, with AUC of `r auc2[1]`. The prediction error rate is `r round(err2, 3)`. 
+
+```{r, message=FALSE}
+# ROC curve
+rocplot(ESP.weighted$health_status_verygood, predict.glm(fit2, ESP.weighted, weights = wt, type = "response"), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+
+
+# Summary 
+
+## ESP
+```{r}
+ESP_h1 <- c("health status: Good vs Not Very Good", "", 
+            round(auc1[1], 3), 
+            power1$x/power1$n, round(err1, 4), "\\*","", "\\*","\\*",
+            "\\*","\\*", "\\*")
+ESP_h2 <- c("health status: Good vs Not Very Good", 
+            "education, income", round(auc2[1], 3), 
+            power2$x/power2$n, round(err2, 4), "\\*", "", "\\*","\\*",
+            "\\*","", "\\*")
+
+ESP.result <- data.frame(ESP_h1, ESP_h2) %>% t() %>% as.data.frame()
+rownames(ESP.result) <- NULL
+colnames(ESP.result) <- c("Outcome", "Adjusted covariates", "AUC", "Power", "Prediction Error Rate", "numeracy", "gender", "age", "educ", "income", "race", "hisp")
+ESP.result %>%
+  kable(caption = "ESP's multivariates regression summary") %>%
+  kable_styling() %>%
+  add_header_above(c("Response" = 1, "Weights" = 1, "Performance"=3,"Predictor"=1,"Covariates"=6))
+```

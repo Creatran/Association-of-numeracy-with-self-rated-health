@@ -1,0 +1,139 @@
+---
+title: "RVq2"
+author: "Haojia Li"
+date: "6/6/2020"
+output: 
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(scipen = 3, digits = 3)
+```
+
+```{r packages}
+# data manipulation
+library(tidyverse)
+# knit tables
+library(knitr)
+library(kableExtra)
+```
+
+```{r load data}
+load("./data/ESP.RData")
+```
+
+## RVq2: care provider visits in the past 12 months
+
+### Distribution (barplot)
+
+```{r}
+# table(ESP$visits_12mos, useNA = "ifany")
+# median(ESP$RVq2)
+ESP %>%
+  ggplot() +
+  # draw the basic bar plot
+  geom_bar(aes(x = visits_12mos), stat = "count", fill = "white", color = "black") +
+  # add the count label to each bar
+  geom_text(stat = "count", aes(x = visits_12mos, label = ..count..), position = position_stack(vjust = 0.5), size = 3.2) +
+  # add a vertical dash line showing the position of median visit level
+  # the median level is 3: once every few month
+  # the first half of the sample is made up of:
+    # 72 never + 237 1-2 times + 91 once every few month
+    # 91 is about 1/3 of the whole "once every few month" group
+  # thus the position of the dash line is at about 1/3 of the bar of "once every few month
+  geom_vline(xintercept = 2.85,linetype = "longdash", color = "red", ) +
+  theme_bw() +
+  # rotate the x-axis labels to avoid overlap
+  theme(axis.text.x = element_text(angle = 20, hjust = 1)) +
+  labs(x = NULL, y = NULL, 
+       title = "Distribution of care provider visits in the past 12 months", 
+       subtitle = 'The median level of visits is "once every few month"\nDash line: the approximate position of the median in the sample')
+```
+
+## RVq2 and JAq4
+
+### Distribution
+
+```{r}
+ESP %>%
+  group_by(visits_12mos, health_status) %>%
+  # summarise the number in each combination of care provider visits and health status
+  summarise(N = n()) %>%
+  # fill each tile by N
+  # no matter what color I set here, the output plot always shows the same color, which is weird
+  ggplot(aes(x=visits_12mos, y=health_status, fill=N, color = "")) +
+  # plot heatmap
+  geom_tile() + 
+  # add the count label to each tile
+  geom_text(aes(label = N), size = 4) + 
+  # change direction to reverse the order of the color corresponding to the count levels
+  scale_fill_distiller(palette = "Blues", direction = "horizontal") +
+  theme_minimal() +
+  # rotate the x-axis labels to avoid overlap
+  theme(axis.text.x = element_text(angle = 20, hjust = 1)) +
+  labs(x = NULL, y = NULL, title = "Distribution of participants by health status and care provider visits") +
+  # omit the legend of color
+  guides(color = F)
+```
+
+### Correlation: Cramer's V
+
+Since both of RVq2 (care provider visits) and JAq4 (health_status) are categorical variables, traditional test such as chi-square test and fisher's test is not applicable. We calculate Cramer's V based on chi-square statistic here to evaluate the correlation between the two outcome of interest. **The smaller V, the lower the correlation.**
+
+[Overview of correlation measures between categorical and continuous variables](https://medium.com/@outside2SDs/an-overview-of-correlation-measures-between-categorical-and-continuous-variables-4c7f85610365)
+
+[Wikipedia of Cramer's V](https://en.wikipedia.org/wiki/Cram%C3%A9r%27s_V)
+
+[Implementation in R](https://datascience.stackexchange.com/questions/893/how-to-get-correlation-between-two-categorical-variable-and-a-categorical-variab)
+
+```{r}
+# v.cclt (Cramer's V Calculator) is a function calculating Cramer's V
+v.cclt <- function(tbl) {
+  chi2 <- chisq.test(tbl, correct = F)
+  v <- sqrt(chi2$statistic / sum(tbl))
+  names(v) <- NULL
+  return(v)
+}
+
+tbl <- table(ESP$visits_12mos, ESP$health_status)
+v.cclt(tbl)
+```
+
+As V = 0.293, there is no strong correlation between RVq2 (care provider visits) and JAq4 (health_status).
+
+## RVq2 and numeracy score
+
+```{r}
+ESP %>%
+  ggplot() +
+  geom_boxplot(aes(x=visits_12mos, y=numeracy)) +
+  theme_bw() +
+  # rotate the x-axis labels to avoid overlap
+  theme(axis.text.x = element_text(angle = 20, hjust = 1)) +
+  labs(x = NULL, y = "Numeracy Score", title = "Boxplot of numeracy score by care provider visits")
+
+# performe one-way ANOVA test
+summary(aov(numeracy~visits_12mos, data = ESP))
+```
+
+There is no significant difference across the RVq2 groups regarding numeracy score.
+
+## RVq2 and covariates
+
+### Correlation: Cramer's V
+
+```{r}
+covariates <- c("gender", "age.cat", "educ", "income.cat", "race", "hisp")
+v.values <- sapply(ESP[covariates],function(x) v.cclt(table(ESP$visits_12mos,x)))
+v.values <- t(v.values) %>% as.data.frame()
+rownames(v.values) <- "V"
+kable(v.values) %>%
+  kable_styling(full_width = F)
+```

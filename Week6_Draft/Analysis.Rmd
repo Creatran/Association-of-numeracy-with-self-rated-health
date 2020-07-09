@@ -1,0 +1,279 @@
+---
+title: "Analysis"
+author:
+- "Haojia Li"
+- "Zihan Yang"
+- "Tianran Zhang"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: 
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width=6, fig.height=4, fig.align = "center")
+```
+
+```{r load data}
+# Load Data
+# load("/Users/zihanyang/Documents/Capstone_ESP/Data/RData/ESP_reg.RData")
+load("../data/ESP_reg.RData")
+```
+
+
+```{r packages}
+# Load package
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(kableExtra)
+library(knitr)
+library(arsenal)
+```
+
+```{r boxplot.test function}
+# produce all the pairs within a categorical vector
+produce.full.comp <- function(x) {
+  x <- as.factor(x)
+  n <- nlevels(x)
+  l <- levels(x)
+  comp <- list()
+  k <- 0
+  for(i in 1:(n-1)) {
+    for(j in (i+1):n) {
+      k <- k+1
+      comp[[k]] <- l[c(i,j)]
+    }
+  }
+  return(comp)
+}
+
+
+
+# draw the distribution of numeracy score by covariates (x)
+boxplot.test <- function(x, y = "numeracy", data = ESP.reg, 
+                         pairwise = T, filter.sig = T, comp = NULL,
+                         title = NULL, xlab = "", ylab = "", label.y = 25) {
+  if(is.null(title))
+    title <- paste0("Numeracy distribution by ", x)
+  comp.pairs <- produce.full.comp(unlist(data[x]))
+  comp.result <- compare_means(as.formula(paste0(y,"~",x)), data = data)
+  if(is.null(comp)) {
+    if(filter.sig)
+      comp <- comp.pairs[which(comp.result$p.signif!="ns")]
+    else
+      comp <- comp
+  }
+  p <- ggboxplot(data=data, x=x, y=y, color=x, palette = "jco", legend="",
+                 title = title, xlab=xlab, ylab=ylab) +
+    stat_compare_means(aes(label =ifelse(as.numeric(..p.format..)<0.001,
+                                         paste0(..method.., ", p<0.001"),
+                                         paste0(..method.., ", p=", round(as.numeric(..p.format..),3)))),
+                       label.y = label.y)
+  if(pairwise)
+    p <- p + stat_compare_means(aes(label = ..p.signif..),
+                                symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, 1), 
+                                                   symbols = c("***", "**", "*", "ns")),
+                                comparisons = comp)
+  return(p)
+}
+
+
+```
+
+
+# ESP
+
+## Differential  Analysis
+
+
+### Summary 
+
+1. The distributions of numeracy scores are significant different in the subgroups of `race` , `hisp` , `education` , `income` , `age.cat`.
+
+2. No matter using  not not-poor/poor (corr=0.136, p-value < 0.001) or good/not good(corr=0.175, p-value < 0.001)as the self-reported health status outcome variable, *numeracy score* and self-reported status have positive significant corrrealtion. 
+
+3. No matter using  not poor/poor or good/not good as the self-reported health status outcome variable, `education` (chisq p-value < 0.001) and `income` (chisq p-value < 0.001) subgroups, and `numeracy score` have the significant effects at the  two-sided significance level of 0.05.
+
+### Numeracy 
+
+#### Numaracy vs. Binary Vriable
+When the ordinal variable has only two levels, wilcoxon test will be performed directly.
+
+##### Numaracy vs. Health Status
+
+`Differential Analysis` <br>
+-  numerace vs. health status: good/not good <br>
+There is enough evidence to reject the null hypothesis that the distribution of numeracy scores are the same is good/not good health status subgroup. (p-value < 0.001)
+
+```{r numeracy by good health or not}
+boxplot.test("health_status_good", pairwise = F, label.y = 20, 
+             title = "Numeracy distribution by good health or not")
+```
+
+-  numeracy vs. health status: not poor/poor <br>
+There is enough evidence to reject the null hypothesis that the distribution of numeracy scores are the same is not poor/poor health status subgroup. (p-value < 0.001)
+```{r numeracy by poor health or not}
+boxplot.test("health_status_poor", pairwise = F, label.y = 20, 
+             title = "Numeracy distribution by poor health or not")
+```
+
+`Correlation` <br>
+[Point-Biserial Correlation](https://en.wikipedia.org/wiki/Point-biserial_correlation_coefficient): 1 continuous variable (numeracy score) and 1 binary variable (health status) <br>
+
+No matter using  not not-poor/poor (corr=0.136, p-value < 0.001) or good/not good  (corr=0.175, p-value < 0.001)as the self-reported health status outcome variable, numeracy and self-reported status have positive significant corrrealtion. 
+
+```{r correlation}
+# Poor/Not Poor
+# wilcox
+wilcox <- wilcox.test(numeracy~health_status_poor, data=ESP.reg)
+ap1 <- round(wilcox$p.value,8)
+# correaltion: Point-Biserial Correlation: 1 continuous variable and 1 binary variable
+ESP.reg$health_num_poor <- ifelse(ESP.reg$health_status_poor=="Not Poor",1,0)
+health_num_poor<- with(ESP.reg,cor.test(numeracy,health_num_poor,alternative = "two.sided", method="pearson",conf.level = 0.95,na.action="na.omit"))
+ap2 <-round(health_num_poor$estimate,8)
+names(ap2) <- NULL
+ap3 <-round(health_num_poor$p.value,8)
+
+# Good/Not Good
+# wilcox
+wilcox <- wilcox.test(numeracy~health_status_good, data=ESP.reg)
+ag1 <-round(wilcox$p.value,8)
+# correaltion: Point-Biserial Correlation: 1 continuous variable and 1 binary variable
+ESP.reg$health_num_good <- ifelse(ESP.reg$health_status_good=="Good",1,0)
+health_num_good<- with(ESP.reg,cor.test(numeracy, health_num_good,alternative = "two.sided", method="pearson",conf.level = 0.95,na.action="na.omit"))
+ag2 <-round(health_num_good$estimate,8)
+names(ag2) <- NULL
+ag3 <-round(health_num_good$p.value,8)
+
+
+df <-data.frame(`Correlation` = c("Numeracy vs. Poor/Not Poor", "Numeracy vs. Good/Not Good"),`Point-Biserial Correlation` = c(round(ap2,5),round(ag2,5)), `P.vale` = c("<0.001", "<0.001"))
+kable(df)%>%
+  kable_styling("striped", full_width = FALSE)
+```
+
+-  numeracy vs. hisp <br>
+There is enough evidence to reject the null hypothesis that the distribution of numeracy scores are the same is hisp/non-hisp subgroup.(p-value < 0.001)
+
+```{r numeracy by ethnicity}
+boxplot.test("hisp", pairwise = F, label.y = 20, 
+             title = "Numeracy distribution by ethnicity")
+```
+
+-  numeracy vs. gender <br>
+There is enough evidence to reject the null hypothesis that the distribution of numeracy scores are the same is poor/not poor health status subgroup. (p-value < 0.001)
+```{r numeracy by gender}
+boxplot.test("gender", pairwise = F, label.y = 20)
+```
+
+#### Numaracy vs. Multi-level Vriable
+When the ordinal variable has more than two levels,kruskal-wallis test first be performed, pairwise wilcoxon tests will be performed as follows . <br>
+There is enough evidence to reject the null hypothesis that the distribution of numeracy scores are the same in income subgroups. (p-value < 0.001). Specifically, further comparison indicating that the distribution of numeracy scores are different in income level pairwisely.(all pairs with p-value < 0.001 )
+
+```{r numeracy by income}
+boxplot.test("income.cat", title = "Numeracy distribution by house hold income")
+```
+
+There is enough evidence to reject the null hypothesis that the distribution of numeracy scores are the same is education subgroup. (p-value < 0.001) Specifically, further comparison indicating that the distribution of numeracy scores are different in education level pairwisely.(all pairs with p-value < 0.001)
+
+
+```{r}
+boxplot.test("educ", title = "Numeracy distribution by education level") +
+  rotate_x_text(6) +
+  font("x.text", size = 8)
+```
+
+There is enough evidence to reject the null hypothesis that the distribution of numeracy scores are the same in age subgroup. (p-value = 0.02) Specifically, further pairwise comparison indicating that the distribution of numeracy scores are significantly different (age 21-44 vs. age 45-64)(p-value = 0.0069), and a(ge 21-44 vs. age 65+) (p-value = 0.023)
+
+```{r}
+boxplot.test("age.cat", title = "Numeracy distribution by age level")
+```
+
+There is enough evidence to reject the null hypothesis that the distribution of numeracy scores are the same in race subgroup. (p-value < 0.001) Specifically, further pairwise comparison indicating that the distribution of numeracy scores are significantly different in white vs. black (p-value < 0.001), and white vs.other (p-value <0.001)
+
+```{r}
+boxplot.test("race")
+```
+
+
+### Health Status 
+Because all the variables intended to put in the regression are categorical except the numeracy. We would use chisq test to check self-reported health status across different subgroup(gender, age, education, income, race, hisp) seperately. 
+
+1. Health status: good/not good <br>
+There is enough evidence to reject the null hypothesis that the proportions of good self-reported health status are the same among different education subgroups at the two-sided significance level of 0.05.(p-value < 0.001) And there is enough evidence to reject the null hypothesis that the proportions of good self-reported health status are the same among different income subgroups at the two-sided significance level of 0.05.  (p-value < 0.001)
+
+```{r}
+cat_health_good <- tableby(health_status_good ~ gender + age.cat + educ + income.cat + race +hisp, cat.test="chisq", data=ESP.reg)
+cat_health_good <- as.data.frame(tests(cat_health_good))
+
+pval_good <- t(cat_health_good$p.value) %>%
+  as.data.frame()
+
+pval.format <- function(p) {
+  return(ifelse(p < 0.001, "<0.001", round(p,3)))
+}
+
+pval.symbol <- function(p) {
+  return(case_when(
+    p < 0.001 ~ "***",
+    p < 0.01 ~ "**",
+    p < 0.05 ~ "\\*",
+    TRUE ~ ""
+  ))
+}
+pval_good <- as.data.frame(rbind(pval.format(cat_health_good$p.value),
+                                 pval.symbol(cat_health_good$p.value)))
+colnames(pval_good) <- c("Gender", "Age", "Education", "Income", "Race", "Ethnicity")
+rownames(pval_good) <- c("P-value", "Significance")
+kable(pval_good, caption = "Pearson's Chi-squared Test between Good or Not Good Health Status and Demographical Covarites") %>%
+  kable_styling()
+
+```
+
+```{r include=FALSE}
+colnames(pval_good) <- c("Gender", "Age", "Education", "Income", "Race", "Ethnicity")
+rownames(pval_good) <- c("P-value", "Significance")
+kable(pval_good, caption = "Pearson's Chi-squared Test between Good or Not Good Health Status and Demographical Covarites") %>%
+  kable_styling()
+
+cat_health_good<- cat_health_good%>%mutate(p.value = ifelse(p.value < 0.001, "<0.001", round(p.value,3)))
+kb_good <- kable(cat_health_good)
+kb_good%>%kable_styling("striped", full_width = FALSE)
+
+```
+
+
+2. Health status: not poor/poor <br>
+There is enough evidence to reject the null hypothesis that the proportions of not-poor self-reported health status are the same among different education subgroups at the two-sided significance level of 0.05.(p-value < 0.001) And there is  enough evidence to reject the null hypothesis that the proportions of not-poor self-reported health status are the same among different income subgroups at the two-sided significance level of 0.05. (p-value < 0.001)
+
+```{r}
+cat_health_poor <- tableby(health_status_poor ~ gender + age.cat + educ + income.cat + race +hisp, cat.test="chisq", data=ESP.reg)
+cat_health_poor <-as.data.frame(tests(cat_health_poor))
+
+pval_good <- as.data.frame(rbind(pval.format(cat_health_poor$p.value),
+                                 pval.symbol(cat_health_poor$p.value)))
+colnames(pval_good) <- c("Gender", "Age", "Education", "Income", "Race", "Ethnicity")
+rownames(pval_good) <- c("P-value", "Significance")
+kable(pval_good, caption = "Pearson's Chi-squared Test between Not Poor or Poor Health Status and Demographical Covarites") %>%
+  kable_styling()
+
+```
+
+```{r include=F}
+cat_health_poor <- cat_health_poor%>%mutate(p.value = ifelse(p.value < 0.001, "<0.001", round(p.value,3)))
+kb_poor <- kable(cat_health_poor)
+kb_poor%>%kable_styling("striped", full_width = FALSE)
+```
+
+
+
+
+
+
+
+

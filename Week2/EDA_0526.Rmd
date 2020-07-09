@@ -1,0 +1,663 @@
+---
+title: "Comparison between ESP sample and NYS population / PIAAC sample"
+author:
+- Tianran Zhang
+- Haojia Li
+- Zihan Yang
+date: "5/26/2020"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+# knit tables
+library(knitr)
+library(kableExtra)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r packages}
+# read data
+library(haven)
+library(readxl)
+# data manipulation
+library(tidyverse)
+# knit tables
+library(knitr)
+library(table1)
+
+# Draw ROC plot
+library(ROCR)
+library(pROC)
+
+```
+
+```{r}
+cat.smry <- function(mat, labels = NULL) {
+  perc <- paste0(round(prop.table(mat)*100,2),"%")
+  n.perc <- paste0(mat,"(",perc,")")
+  if(is.null(labels))
+    names(n.perc) <- names(mat)
+  else
+    names(n.perc) <- labels
+  return(n.perc)
+}
+```
+
+```{r data}
+# Read the data
+# raw_ES <- read_xlsx("./data/ESP19 JA - Alldata.xlsx")
+raw_ESP <- read_xlsx("../Data/ESP19 JA - Alldata.xlsx")
+ESP <- raw_ESP %>%
+  select(gender, age, educ, hhinc, hisp, nysregion, employ, JAq1, JAq2, JAq3, JAq4)
+# PIAAC <- read_spss("./data/prgusap1_puf.sav")
+PIAAC <- read_spss("../Data/prgusap1_puf.sav")
+```
+
+# Data Source
+
+## 1. Empire  State  Poll  (ESP 2019) 
+The 2019Empire  State  Poll  (ESP 2019)  is  the seventeenth annual  general  survey  of New  York  Stateresidents age 18 and over. It is an omnibus study combining an annual core of community,economic,andsocial sciencemodules and questions submitted by academic researchers.The ESP 2019was conducted by the Survey Research Institute at Cornell University(SRI).
+
+## 2. Program for the International Assessment of Adult Competencies (PIAAC 2017)
+
+The PIAAC U.S. 2017 public-use file contains individual unit data including both responses to the background questionnaire and the cognitive assessment from the third U.S. PIAAC data collection, completed in 2017. Statistical disclosure control treatments were applied due to confidentiality concerns. 
+[link](https://nces.ed.gov/pubsearch/pubsinfo.asp?pubid=2020222)
+
+## 3. New York State Census 2016
+[link](https://data.census.gov/cedsci/profile?g=0400000US36&q=New%20York)
+
+# Demographic Comparison
+
+## 1. ESP 2019  versus NYS 2016
+
+### Data Description
+
+```{r gender}
+# table(ESP$gender, useNA = "ifany")
+ESP <- ESP %>%
+  mutate(gender = fct_recode(factor(gender), "Male"="1", "Female"="2", "Other"="3", "Refused"="-1")) %>%
+  mutate(gender = factor(gender, levels = c("Male","Female","Other","Refused")))
+```
+
+```{r age}
+ESP <- ESP %>%
+  mutate(age.cat = case_when(
+    age == -1 ~ "Unknown",
+    age < 21 ~ "18-20",
+    age < 45 ~ "21-44",
+    age < 65 ~ "45-64",
+    age >= 65 ~ "65+"
+  )) %>%
+  mutate(age.cat = factor(age.cat))
+```
+
+```{r education}
+# table(ESP$educ, useNA = "ifany")
+ESP <- ESP %>%
+  mutate(education = case_when(
+    educ == -1 ~ "Unknown",
+    educ < 4 ~ "High school or less",
+    educ < 6 ~ "Some college or associate's degree",
+    educ < 8 ~ "Bachelor's degree or higher"
+  )) %>%
+  mutate(education = factor(education, levels = c("High school or less", "Some college or associate's degree", "Bachelor's degree or higher", "Unknown")))
+```
+
+```{r income}
+ESP <- ESP %>%
+  mutate(income = case_when(
+    is.na(hhinc) ~ -1, 
+   hhinc == 1 ~ 1,
+   hhinc < 6 ~ 2,
+    hhinc < 8 ~ 3,
+   hhinc == 8 ~ 4,
+    hhinc == 9 ~ 5
+  )) %>%
+  mutate(income = factor(income, levels = c(1:5,-1), labels = c("<$10k", "$10k-$50k", "$50k-$100k", "$100k-$150k", "$150k+", "No Data")))
+```
+
+```{r race}
+race <- raw_ESP[which(regexpr("race", colnames(raw_ESP))==1)]
+colnames(race) <- c("white", "black", "natam", "asian", "other")
+race[is.na(race)] = 0
+race <- race %>%
+  mutate(count = white+black+natam+asian+other,
+         race = case_when(
+           count >= 2 ~ "Unknown",
+           count <= 0 | other == 1 ~ "Other",
+           white == 1 ~ "White",
+           black == 1 ~ "Black",
+           natam == 1 ~ "Natam",
+           asian == 1 ~ "Asian"),
+         race = factor(race, levels = c("White", "Black", "Asian", "Natam", "Unknown", "Other")))
+ESP <- cbind(ESP,race)
+```
+
+```{r ethnicity}
+ESP <- ESP %>%
+  mutate(hisp = fct_recode(factor(hisp), "Non-hispanic"="0", "Hispanic"="1", "Refused"="-1")) %>%
+  mutate(hisp = factor(hisp, levels = c("Hispanic", "Non-hispanic", "Refused")))
+```
+
+```{r employment}
+ESP <- ESP %>%
+  mutate(employ = ifelse(employ == 1, "Yes", "No")) %>%
+  mutate(employ = factor(employ, levels = c("Yes", "No")))
+```
+
+```{r NYS population}
+# NYS_age_gender <- read_xlsx("./data/nys_age_gender.xlsx", range = "A29:G32", col_names = F)
+NYS_age_gender <- read_xlsx("../Data/nys_age_gender.xlsx", range = "A29:G32", col_names = F)
+
+NYS.gender <- cat.smry(c(sum(NYS_age_gender[,4]), sum(NYS_age_gender[,6])), labels = c("Male", "Female"))
+NYS.age <- cat.smry(unlist(NYS_age_gender[,2]), labels = levels(ESP$age.cat)[1:4])
+
+# NYS_educ <- read_xlsx("./data/nys_educ.xlsx", range = "C6:Q8")[2,]
+NYS_educ <- read_xlsx("../Data/nys_educ.xlsx", range = "C6:Q8")[2,]%>% unlist()
+NYS.educ <- sapply(list(1:8, 9:11, 12:15), function(x) sum(NYS_educ[x])) %>% cat.smry(labels = levels(ESP$education)[1:3])
+
+# here actually the first two levels of income for NYS is under 15k and 15k-50k
+# NYS_income <- read_xls("./data/nys_income.xls", range = "D7:L7", col_names = F) %>% unlist()
+NYS_income <- read_xls("../Data/nys_income.xls", range = "D7:L7", col_names = F) %>% unlist()
+NYS.income <- sapply(list(1, 2:4, 3:6, 7, 8:9), function(x) round(sum(NYS_income[x])/100*128579)) %>% cat.smry(labels = c("<$10k", "$10k-$50k", "$50k-$100k", "$100k-$150k", "$150k+"))
+
+# collapse asian alone and native hawaiian and other pacific islander alone together as asian https://www.census.gov/quickfacts/NY
+NYS.race <- cat.smry(round(c(0.697,0.176,0.091,0.01,0.026)*19453561/1000), labels = c("White", "Black", "Asian", "Natam", "More than 1 race"))
+NYS.hisp <- cat.smry(c(41217,250263-41217), labels = c("Hispanic", "Non-hispanic"))
+
+# Data about employment status not found in the website; the calculation in Nat's result for employment status was incorrect
+# NYS.employ <- cat.smry(c(16080891,1058919))
+```
+
+```{r}
+ESP.smry <- c(cat.smry(table(ESP$gender)),
+              cat.smry(table(ESP$age.cat)),
+              cat.smry(table(ESP$education)),
+              cat.smry(table(ESP$income)),
+              cat.smry(table(race$race)),
+              cat.smry(table(ESP$hisp)),
+              cat.smry(table(ESP$employ)))
+NYS.smry <- c(NYS.gender, NYS.age, NYS.educ, NYS.income, NYS.race, NYS.hisp)
+comp <- data.frame(Demographic = names(ESP.smry), ESP = ESP.smry) %>%
+  left_join(data.frame(d = names(NYS.smry), NYS = NYS.smry), by = c("Demographic" = "d"))
+
+comp <- rbind(c("Gender", " ", ""), comp[1:4,],
+              c("Age", "", ""), comp[5:9,],
+              c("Education", "", ""), comp[10:13,],
+              c("Income", "", ""), comp[14:19,],
+              c("Race", "", ""), comp[20:25,],
+              c("Ethnicity", "", ""), comp[26:28,],
+              c("Employment", "", ""), comp[29:30,]) %>% as.data.frame()
+
+kable(comp, row.names = F)
+```
+
+## 2. ESP 2019 versus PIAAC 2017
+
+### Data Description
+
+1. Outcome: Health status – PIAAC Var name = I_Q08
+-  Self-reported health status
+-  Survey Question: In general, would you say your health is excellent, very good, good, fair, or poor?
+-  Continuous
+
+i. Multi-level
+
+-  Excellent
+-  Very good
+-  Good
+-  Fair
+-  Poor
+-  Unknown
+
+ii.  Binary
+-  Good
+-  Poor
+-  Unknown
+
+```{r}
+# Create the 
+
+PIAAC <- PIAAC %>%
+  mutate(`health status (5 levels)` = case_when(
+    is.na(I_Q08) ~ "Unknown",
+    I_Q08 == 1 ~ "Excellent",
+    I_Q08 == 2 ~ "Very Good",
+    I_Q08 == 3 ~ "Good",
+    I_Q08 == 4 ~ "Fair",
+    I_Q08 == 5 ~ "Poor"
+  )) %>%
+  mutate(`health status (5 levels)`= factor(`health status (5 levels)`, levels = c("Excellent", "Very Good", "Good", "Fair", "Poor", "Unknown")))%>%
+  mutate(`health status (binary)`= fct_recode(factor(`health status (5 levels)`),"Good" = "Excellent", "Good"="Good", "Good"="Very Good", "Poor"="Fair", "Poor" = "Poor"))
+```
+
+2. Predictor: Numeracy 
+-  Numeracy scale score - Plausible value 1
+-  Continuous
+-  PIAAC var name = PVNUM1
+```{r Numeracy}
+PIAAC <- PIAAC %>%
+  mutate(numeracy = PVNUM1)
+```
+
+3. Covariates
+  (1) Education
+  
+  * PIAAC Var name = B_Q01A
+  
+    
+    1 - No formal qualification or below ISCED1;  
+    2 - ISCED 1;  
+    3 - ISCED 2;  
+    7 - ISCED 3 (without distinction A-B-C, 2y+);  
+    9 - ISCED 4A-B;  
+    11 - ISCED 5B;  
+    12 - ISCED 5A, bachelor degree;  
+    13 - ISCED 5A, master degree;  
+    14 - ISCED 6;  
+    15 - Foreign qualification;  
+    NA - Unknown
+    
+  * PIAAC Var name = B_Q01A_T
+  
+    
+    1 - Less than high school;  
+    2 - High school;  
+    3 - Above high school;  
+    4 - Not definable;  
+    NA - Unknown
+  
+  (2) Income 
+-  Categorical 
+-  PIAAC Var name = J_Q09USX  
+
+    1 - <$10k;  
+    2 - $10k-20k;  
+    3 - $20k-30k;  
+    4 - $30k-40k;  
+    5 - $40k-50k;  
+    6 - $50k-60k;  
+    7 - $60k-75k;  
+    8 - $75k-100k;  
+    9 - $100k-150k;  
+    10 - $150k+;  
+    11 - No household income;  
+    NA - Unknown  
+    
+  (3) Race/ethnicity 
+-  Categorical 
+-  PIAAC Var name = RACETHN_5CAT  
+
+    N - Not stated or inferred;  
+    1 - Hispanic;  
+    2 - White;  
+    3 - Black;  
+    4 - Asian/pacific islander;  
+    6 - Other race;  
+    NA - Unknown
+  
+```{r PIAAC income}
+PIAAC <- PIAAC %>%
+  mutate(income = case_when(
+    is.na(J_Q09USX) ~ -1, 
+    J_Q09USX %in% c(1,11) ~ 1,
+    J_Q09USX < 6 ~ 2,
+    J_Q09USX < 9 ~ 3,
+    J_Q09USX == 9 ~ 4,
+    J_Q09USX == 10 ~ 5
+  )) %>%
+  mutate(income = factor(income, levels = c(1:5,-1), labels = c("<$10k", "$10k-$50k", "$50k-$100k", "$100k-$150k", "$150k+", "No Data")))
+# PIAAC.income <- cat.smry(table(PIAAC$income))
+# PIAAC.income
+```
+
+```{r PIAAC educ}
+PIAAC <- PIAAC %>%
+  mutate(education = case_when(
+    is.na(B_Q01A_T) ~ "Unknown",
+    B_Q01A_T == 1 ~ "Less than high school",
+    B_Q01A_T == 2 ~ "High school",
+    B_Q01A_T == 3 ~ "Above high school",
+    B_Q01A_T == 4 ~ "Not definable"
+  )) %>%
+  mutate(education = factor(education, levels = c("Less than high school", "High school", "Above high school", "Not definable", "Unknown")))
+# cat.smry(table(PIAAC$educ))
+```
+
+```{r PIAAC race}
+PIAAC <- PIAAC %>%
+  mutate(race = case_when(
+    is.na(RACETHN_5CAT) ~ "Unknown",
+    RACETHN_5CAT == 1 ~ "Hispanic",
+    RACETHN_5CAT == 2 ~ "White",
+    RACETHN_5CAT == 3 ~ "Black",
+    RACETHN_5CAT == 4 ~ "Asian/pacific islander",
+    RACETHN_5CAT == 6 ~ "Other"
+  )) %>%
+  mutate(race = factor(race, levels = c("White", "Black", "Asian/pacific islander", "Hispanic", "Other", "Unknown")))
+# cat.smry(table(PIAAC$race))
+```
+
+4. Additional predictors – run an additional stepwise regression 
+  i.Literacy
+-  Literacy scale score - Plausible value 1 
+-  Continuous
+-  PIAAC Var name = PVLIT1
+
+  ii.	Problem solving abilities
+-  Problem-solving scale score - Plausible value 1 
+-  Continuous
+-  PIAAC Var name = PVPSL1 <br>
+  [link](https://nces.ed.gov/surveys/pisa/pisa2015/pisa2015highlights_8e.asp) <br>
+  [link](https://www.oecd-ilibrary.org/docserver/9789264056275-7-en.pdf?expires=1590506882&id=id&accname=guest&checksum=E6F86372215D92A4AC2E8A34E843CADA)
+  
+```{r PIAAC	Literacy}
+PIAAC <- PIAAC %>%
+  mutate(`literacy scale score` = PVLIT1)
+```
+
+```{r PIAAC Problem solving abilitie}
+PIAAC <- PIAAC %>%
+  mutate(`problem-solving scale score` = PVPSL1)
+```
+
+
+```{r ESP data}
+# Calculate numeracy score
+ESP_demo <- ESP%>%
+  mutate(numeracy = as.numeric(JAq1)+as.numeric(JAq2)+as.numeric(JAq3))%>%
+  mutate(`health status (5 levels)` = case_when(
+    is.na(JAq4) ~ "Unknown",
+    JAq4 == 1 ~ "Excellent",
+    JAq4 == 2 ~ "Very Good",
+    JAq4 == 3 ~ "Good",
+    JAq4 == 4 ~ "Fair",
+    JAq4 == 5 ~ "Poor",
+    JAq4 == -2 ~ "Unknown",
+    JAq4 == -1 ~ "Unknown",
+  )) %>%
+  mutate(JAq4 = factor(JAq4, levels = c("Excellent", "Very Good", "Good", "Fair", "Poor", "Unknown"))) %>%
+  mutate(`health status (5 levels)` = factor(`JAq4`, levels = c("Excellent", "Very Good", "Good", "Fair", "Poor", "Unknown")))%>%
+mutate(`health status (binary)`= fct_recode(factor(`health status (5 levels)`),"Good" = "Excellent", "Good"="Good", "Good"="Very Good", "Poor"="Fair", "Poor" = "Poor"))%>%
+  mutate(ind = factor(rep( "ESP", 800)))%>%
+   dplyr::select(numeracy, `health status (binary)`, `health status (5 levels)`, income, race, education,ind)
+
+```
+
+
+## PIAAC Table 1
+```{r ESP vs. PIAAC}
+library(compareGroups)
+library(knitr)
+#`literacy scale score`, `problem-solving scale score`
+PIAAC_demo <- PIAAC %>%
+  mutate(ind = factor(rep( "PIAAC", 3660)))%>%
+  dplyr::select(numeracy, `health status (binary)`, `health status (5 levels)`, income, race, education,ind)
+# merge two dataset: esp and piaac
+demo <- rbind(PIAAC_demo, ESP_demo)
+
+# PIAAC_table
+PIAAC_table <- PIAAC %>%
+  mutate(ind = factor(rep( "PIAAC", 3660)))%>%
+  dplyr::select(numeracy, `health status (binary)`, `health status (5 levels)`, income, race, education,`literacy scale score`, `problem-solving scale score`)
+
+
+PIACC_tb <- compareGroups(`health status (binary)` ~ numeracy + income + education + + race + `literacy scale score` + `problem-solving scale score`, data = PIAAC_table, byrow = TRUE, na.action = na.exclude, include.miss = TRUE)
+restab <- createTable(PIACC_tb, show.n = F,show.p.overall = FALSE)
+export2md(restab, caption = "PIACC Table 1 ( Health Status with 2 levels)")
+
+PIACC_tb2 <- compareGroups(`health status (5 levels)` ~ numeracy + income + education + + race + `literacy scale score` + `problem-solving scale score`, data = PIAAC_table, byrow = TRUE, na.action = na.exclude, include.miss = TRUE, max.ylev = 7)
+restab2 <- createTable(PIACC_tb2, show.n = F,show.p.overall = FALSE)
+export2md(restab2, caption = "PIACC Table 1 ( Health Status with 5 levels)")
+```
+
+
+```{r results='hide'}
+load("../Data/PIAAC.RData")
+```
+
+
+# Regression Analysis 
+
+```{r}
+PIAAC_clean <- PIAAC %>%
+  filter(health_status != "Unknown") %>%
+  mutate(health_status_1 = factor(health_status_1),
+         health_status_2 = factor(health_status_2))
+PIAAC_clean$race[PIAAC_clean$race == "Unknown"] = "Other"
+PIAAC_clean$race <- factor(PIAAC_clean$race)
+```
+
+
+## Univariate ordinal logistic regression
+**With health status 1 as outcome**    
+health_status_1:     
+  Poor: health score >=5;    
+  Not poor: health score < 5.   
+  
+```{r}
+univ <- function(var){
+  form = formula(paste0("health_status_1 ~ ", var))
+  logit = glm(form, data = PIAAC_clean, family = "binomial")
+  OR = data.frame(exp(cbind(OR = coef(logit), confint(logit))))[-1, ]
+  OR = cbind(OR, coef(summary(logit))[-1, 4])
+  colnames(OR) <- c("OR", "2.5%", "97.5%", "p-val")
+  return(OR)
+}
+
+varlist <- c("numeracy", "educ", "income.cat", "race", "literacy", "problem_solving")
+univ_summary <- do.call(rbind.data.frame, lapply(varlist, univ))
+univ_summary$sig <- ifelse(univ_summary$`p-val` < 0.05, "*", "")
+kable(univ_summary)%>%
+  kable_styling(full_width = F) 
+```
+
+The result table shows that numeracy, education, income, literacy socre, and problem solving score are significant predictors for health status 1. Race seems not statistically associated with health status 1 at 0.05 significant level.    
+
+**With health status 2 as outcome**    
+health_status_2:     
+  Not Good: health score >=4;    
+  Good: health score < 4.   
+  
+```{r}
+univ <- function(var){
+  form = formula(paste0("health_status_2 ~ ", var))
+  logit = glm(form, data = PIAAC_clean, family = "binomial")
+  OR = data.frame(exp(cbind(OR = coef(logit), confint(logit))))[-1, ]
+  OR = cbind(OR, coef(summary(logit))[-1, 4])
+  colnames(OR) <- c("OR", "2.5%", "97.5%", "p-val")
+  return(OR)
+}
+
+varlist <- c("numeracy", "educ", "income.cat", "race", "literacy", "problem_solving")
+univ_summary <- do.call(rbind.data.frame, lapply(varlist, univ))
+univ_summary$sig <- ifelse(univ_summary$`p-val` < 0.05, "*", "")
+kable(univ_summary)%>%
+  kable_styling(full_width = F) 
+```
+
+The result table shows that numeracy, education, income, literacy socre, problem solving score as well as race are significant predictors for health status 2.        
+ 
+
+## Step-wise multivariate logistic regression     
+**With health status 1 as outcome**    
+* Outcome: health_status_1         
+  Poor: health score >=5;    
+  Not poor: health score < 5.     
+* Predictor: numeracy score        
+* Covariates: education, income and race.    
+```{r, warning=FALSE}
+full1 <- glm(health_status_1 ~ numeracy + educ + income.cat + race, data = PIAAC_clean, family = "binomial")
+final1 <- step(full1, direction = "both", trace = 0)
+multi_summary1 <- exp(cbind(coef(final1), confint(final1))[-1, ]) %>% as.data.frame()
+colnames(multi_summary1)[1] <- "OR"
+multi_summary1$sig <- ifelse(summary(final1)$coefficients[-1, 4] < 0.05, "*", "")
+kable(multi_summary1) 
+```
+
+```{r, message=FALSE}
+# ROC curve
+rocplot <- function(truth, pred, ...){
+  predob = prediction(pred, truth)
+  perf = performance(predob, "tpr", "fpr")
+  plot(perf, colorize=F, ...) 
+  area = auc(truth, pred)
+  area = format(round(area, 4), nsmall = 4)
+  text(x = .8, y = .1, labels = paste("AUC = ", area))
+  segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "gray", lty = 2)
+}
+
+rocplot(PIAAC_clean$health_status_1, predict.glm(final1, PIAAC_clean, type = "response", na.action = na.omit), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+Significant predictors: numeracy, income, race. (No education)
+
+**With health status 2 as outcome**    
+* Outcome: health_status_1         
+  Not Good: health score >=4;    
+  Good: health score < 4.     
+* Predictor: numeracy score        
+* Covariates: education, income and race.     
+
+```{r, warning=FALSE}
+full2 <- glm(health_status_2 ~ numeracy + educ + income.cat + race, 
+             data = PIAAC_clean, family = "binomial")
+final2 <- step(full2, direction = "both", trace = 0)
+multi_summary2 <- exp(cbind(coef(final2), confint(final2))[-1, ]) %>%
+  as.data.frame()
+colnames(multi_summary2)[1] <- "OR"
+multi_summary2$sig <- ifelse(summary(final2)$coefficients[-1, 4] < 0.05, "*", "")
+kable(multi_summary2) 
+```
+
+
+
+
+```{r}
+rocplot(PIAAC_clean$health_status_2, predict.glm(final2, PIAAC_clean, type = "response", na.action = na.omit), title = "ROC plot")
+title(main = "ROC plot")
+
+```
+
+Significant predictors: numeracy, education, income, race.
+
+
+## Considering the additional predictors: Literacy, Problem solving abilities.    
+**With health status 1 as outcome**  
+* Outcome: health_status_1         
+  Poor: health score >=5;    
+  Not Poor: health score < 5.    
+* Predictor: numeracy score        
+* Covariates: education, income, race, literacy and problem solving.     
+
+
+```{r}
+PIAAC_clean2 <- na.omit(PIAAC_clean) 
+
+```
+
+
+```{r, warning=FALSE}
+full3 <- glm(health_status_1 ~ numeracy + educ + income.cat + race +
+               literacy + problem_solving, data = PIAAC_clean, 
+             family = "binomial")
+final3 <- step(full3, direction = "both", trace = 0)
+multi_summary3 <- exp(cbind(coef(final3), confint(final3))[-1, ]) %>%
+  as.data.frame()
+colnames(multi_summary3)[1] <- "OR"
+multi_summary3$sig <- ifelse(summary(final3)$coefficients[-1, 4] < 0.05, "*", "")
+kable(multi_summary3)
+```
+
+```{r}
+rocplot(PIAAC_clean2$health_status_1, predict.glm(final3, PIAAC_clean2, type = "response", na.action = na.omit), title = "ROC plot")
+title(main = "ROC plot")
+
+```
+
+
+significant predictors: numeracy, education, income, race, problem solving
+
+
+
+**With health status 2 as outcome**  
+* Outcome: health_status_1         
+  Not Good: health score >=4;    
+  Good: health score < 4.    
+* Predictor: numeracy score        
+* Covariates: education, income, race, literacy and problem solving.     
+
+
+```{r, warning=FALSE}
+full4 <- glm(health_status_2 ~ numeracy + educ + income.cat + race +
+               literacy + problem_solving, 
+             data = PIAAC_clean, family = "binomial")
+final4 <- step(full4, direction = "both", trace = 0)
+multi_summary4 <- exp(cbind(coef(final4), confint(final4))[-1, ]) %>%
+  as.data.frame()
+colnames(multi_summary4)[1] <- "OR"
+multi_summary4$sig <- ifelse(summary(final4)$coefficients[-1, 4] < 0.05, "*", "")
+kable(multi_summary4)
+```
+
+```{r}
+rocplot(PIAAC_clean2$health_status_2, predict.glm(final4, PIAAC_clean2, type = "response", na.action = na.omit), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+Significant predictors: numeracy, education, income, race, problem solving.     
+
+### Summary 
+ESP
+
+Step-wise multivariate linear regression   
+
+* Outcome: binary health status   
+
+* significant covariates: education, income, ethinitity   
+
+* significant predictor: numeracy score   
+
+PIAAC   
+
+* Outcome: health status 1   
+
+* predictor & covariates: numeracy score & income, race, (education)   
+
+* AUC: 0.7524   
+
+  
+
+* Outcome: health status 2   
+
+* predictor & covariates: numeracy score & income, race, **education**   
+
+* AUC: 0.7114   
+
+  
+
+* Outcome: health status 1   
+
+* predictor & covariates: numeracy score & income, race, **education**, problem_solving, (literacy score)   
+
+* AUC: 0.8196   
+
+
+
+* Outcome: health status 2   
+* predictor & covariates: numeracy score & income, race, **education**, problem solving, (literacy score).   
+* AUC: 0.6920   
+
+
+
+Overall, numeracy score is a significant predictor, income and race are significant covariates in all models; education is a significant covariates in all the other models except for the first one (the model with 4 independent variabes and set the health score cutpoint at 5)   
+
+As for additional predictors, problem solving score is significant while literacy score is not significant no matter which cut point to set.   
+
+
+

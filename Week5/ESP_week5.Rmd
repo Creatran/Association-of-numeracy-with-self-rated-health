@@ -1,0 +1,187 @@
+---
+title: "Week5 Analysis"
+author: "Tianran Zhang"
+date: "6/15/2020"
+output: 
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(scipen = 3, digits = 3)
+```
+
+```{r packages and data}
+library(tidyverse)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+# Draw ROC plot
+library(ROCR)
+library(pROC)
+library(simr)
+# Regression on weighted data
+library(survey)
+# PIAAC Regression
+library(intsvy)
+
+load("../Data/ESP_reg.RData")
+load("../Data/PIAAC.RData")
+load("../Data/NYS.RData")
+```
+
+# Regressions 
+## Unweighted Logistic Regression
+### ESP
+
+```{r}
+ESP_h1 <- c("0.8054","educ: 88.00% (79.98, 93.64)","","\\*","","","")
+ESP_h2 <- c("0.9280","100%(96.38,100.0)","\\*","\\*","\\*","","")
+ESP.result <- data.frame(ESP_h1, ESP_h2) %>% t() %>% as.data.frame()
+rownames(ESP.result) <- c("Not Poor vs Poor", "Good vs Not Good")
+colnames(ESP.result) <- c("AUC", "Power(95%CI)", "numeracy", "educ", "income", "race", "ethinic")
+ESP.result %>%
+  kable(caption = "ESP's unweighted regression summary") %>%
+  kable_styling() %>%
+  add_header_above(c(" "=1,"Performance"=2,"Predictor"=1,"Covariates"=4))
+```
+
+### PIAAC
+
+```{r}
+PIAAC_h1_0 <- c("0.7469","99.00% (94.55, 99.97)","\\*","","\\*","\\*")
+PIAAC_h2_0 <- c("0.7098","100.0%(96.38,100.0)","\\*","\\*","\\*","\\*")
+PIAAC_result0 <- data.frame(PIAAC_h1_0, PIAAC_h2_0) %>% t() %>% as.data.frame()
+rownames(PIAAC_result0) <- c("Not Poor vs Poor", "Good vs Not Good")
+colnames(PIAAC_result0) <- c("AUC", "Power(95%CI)", "numeracy", "educ", "income", "race")
+PIAAC_result0 %>%
+  kable(caption = "PIAAC's unweighted regression summary with numeracy as the only predictor") %>%
+  kable_styling() %>%
+  add_header_above(c(" "=1,"Performance"=2,"Predictor"=1,"Covariates"=3))
+
+PIAAC_h1_1 <- c("0.8198","100.0%(96.38,100.0)","\\*","\\*","","\\*","\\*","\\*")
+PIAAC_h2_1 <- c("0.6907","54.00%(43.74,64.02)","","\\*","","\\*","\\*","")
+PIAAC_result1 <- data.frame(PIAAC_h1_1, PIAAC_h2_1) %>% t() %>% as.data.frame()
+rownames(PIAAC_result1) <- c("Not Poor vs Poor", "Good vs Not Good")
+colnames(PIAAC_result1) <- c("AUC", "Power(95%CI)", "numeracy", "problem", "literacy", "educ", "income", "race")
+PIAAC_result1 %>%
+  kable(caption = "PIAAC's unweighted regression summary with additional predictors") %>%
+  kable_styling() %>%
+  add_header_above(c(" "=1,"Performance"=2,"Predictor"=3,"Covariates"=3))
+
+```
+
+## Weighted Logistic Regression
+
+### ESP
+We used iterative solutions manual version to derive the post-stratification weights for education, income, and race. The weighted regression results show that only race is a significant covariate. So, we only added weights for race and refit the regressiom models. The outcome summary table is displayed bellow:    
+```{r}
+ESP_h1 <- c("0.8193","0.00% ( 0.00,  3.62)","","\\*","","","")
+ESP_h2 <- c("0.9285","100%(96.38,100.0)","\\*","","","","\\*")
+ESP.result <- data.frame(ESP_h1, ESP_h2) %>% t() %>% as.data.frame()
+rownames(ESP.result) <- c("Not Poor vs Poor", "Good vs Not Good")
+colnames(ESP.result) <- c("AUC", "Power(95%CI)", "numeracy", "educ", "income", "race", "ethinic")
+ESP.result %>%
+  kable(caption = "ESP's unweighted regression summary") %>%
+  kable_styling() %>%
+  add_header_above(c(" "=1,"Performance"=2,"Predictor"=1,"Covariates"=4))
+```
+
+
+## Notes
+### Power calculation
+The power of a hypothesis test is defined as the probability that the test will reject the null hypothesis, assuming that the null hypothesis is false.    
+Here if the effect of `numeracy` on people's health outcome is significant, a higher power would indicate a higher probability that our analysis will judge that `numeracy` is statistically significant.     
+We did power calculations based on Monte Carlo simulations. The estimated power and the corresponding 95% CIs are derived from R function `powerSim` from package `simr, version 1.0.5`.    
+
+reference: https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.12504    
+
+### About weights
+**Tow most common types of survey weights**:    
+- Design Weights     
+  Normally used to compensate for over- or under-sampling of specific cases or for disproportionate stratification.      
+  Example: It is a common practice to over-sample minority group members or persons living in areas with larger percentage minority. If we doubled the size of our sample from minority areas, then each case in that area
+would get a design weight of .5      
+  The design weight when we want the statistics to be representative of the population     
+  *Here ESP data considered people living in downstate and upstate, and assign people in each area with a design weight of 0.5*     
+
+- Post-Stratification or Non-response weights     
+  This type is used to compensate for that fact that persons with certain characteristics are not as likely to respond to the survey.     
+  Example. Most general population surveys have substantially more female than male respondents (often 60/40) although there are often more males in the population. Because the survey over-represents females and under-represents males in the population a weight is used to compensate for this bias.     
+  There are many respondent characteristics that are likely to be
+related to the propensity to respond related to the propensity to respond: Age, Education, Race/ethnicity, Gender, etc.    
+
+**Weights calculation**    
+In our analysis, since the design weights is 0.5 for each subject, we then only calculated the post-stratification weight for each case.     
+
+reference: http://www.nyu.edu/classes/jackson/design.of.social.research/Readings/Johnson%20-%20Introduction%20to%20survey%20weights%20%28PRI%20version%29.pdf
+
+# Plausible values in PIAAC
+## Some Information
+PIAAC cannot provide individual-level results, because each adult answers only a small number of assessment questions. PIAAC provides reliable estimates of proficiency only at the national level, or at the level of large subgroups (e.g., females, employed, or college educated).       
+
+Plausible Values (PVs) allows PIAAC dataset information to be saved at the case level to estimate proficiency at the national or subgroup level. Each case's PVs reflect not only that individual's performance on the small number of items s/he answered, but also the performance of similar respondents on the rest of the PIAAC assessment.    
+
+Each individual case in the PIAAC dataset has a randomly chosen set of ten plausible values (PVs). All ten PVs must be used together to estimate proficiency, or else one understates the variability in the predicted outcomes. The randomly chosen set of PVs best represents the score distribution for a subgroup of adults.    
+
+## More information  
+
+While it is relatively easy to determine a person's age, it is not straightforward to determine a person's numeracy proficiency, and some assessment need be carried out to determine people's numeracy score. However, the result of the assessment will contain some uncertainty since only a small number of assessment questions were answered by each individual. This uncertainty is referred to as measurement error.    
+If the measurement at the individual level contains error, then this error should be taken into account in the computation of population statistics and their standard errors.    
+One way to express the degree of uncertainty of measurement at the individual level is to provide several scores for each individual to reflect the magnitude of the error of the individual's estimate. If measurement error is small, then multiple scores for an individual will be close together. If measurement error is large, then multiple scores for an individual will be far apart. These multiple scores for an individual, sometimes known as multiple imputations, are plausible values.     
+
+## A formal definition of plausible values  
+
+One way to describe plausible values is to say that plausible values represent the range of numeracy scores that a person might reasonably have, given the person's responses.   
+Instead of dircctly estimating a person's numeracy score, a probability distribution for a person's numeracy score is estimated. That is, instead of obtaining a point estimate for $\theta$, a range of possible values for $\theta$, with an associated probability for each of these values, is estimated. Plausible values are random draws from this (estimated) distribution for $\theta$. This distribution is referred to as the posterior distribution for a person.        
+That is, if a person's iten response pattern is x, then the person;s posterior($\theta$) distribution is given by h($\theta|x$). Plausible values for a student with item response pattern x are random draws from the probability distribution with density h($\theta|x$). Therefore, plausible values provide not only information about a person's numeracy profeciency estimate, but also the uncertainty associated with this estimate.   
+
+```{r}
+raw_PIAAC <- haven::read_spss("../Data/prgusap1_puf.sav")
+num_pv <- paste0("PVNUM", 1:10)
+# paste(num_pv, collapse = " + ")
+
+pv <- raw_PIAAC[, num_pv] %>%
+  gather(key = "PVs", value = "value")
+#table1(~ PVNUM1 + PVNUM2 + PVNUM3 + PVNUM4 + PVNUM5 + PVNUM6 + 
+#         PVNUM7 + PVNUM8 + PVNUM9 + PVNUM10, data = pv)
+
+ggplot(data = pv) +
+  geom_boxplot(aes(x = PVs, y = value)) + 
+  scale_x_discrete() +
+  ggtitle("Boxplots among 10 numeracy PVs") +
+  ylab("PV score") +
+  theme_bw()
+```
+
+## ANOVA Test
+```{r}
+# anova test
+summary(aov(value ~ PVs, data = pv)) 
+```
+It seems like the distribution of the 10 pvs are almost the same.  
+
+## within participant variation
+```{r}
+pv <- raw_PIAAC[, num_pv]
+pv <- pv[complete.cases(pv), ]
+pv$inner.var <- apply(pv, 1, var)
+hist(pv$inner.var, breaks = 50, xlab = "within participant variation", 
+     main = "Histogram of pv's inner variation")
+
+quantile(pv$inner.var)
+```
+
+It seems most subjects have inner variances less than 500.      
+
+
+reference:      
+https://cran.r-project.org/web/packages/intsvy/intsvy.pdf     
+https://nces.ed.gov/training/datauser/PIAAC_04/assets/PIAAC_04.pdf     https://www.oecd.org/skills/piaac/piactools_16oct_for_web.pdf     
+

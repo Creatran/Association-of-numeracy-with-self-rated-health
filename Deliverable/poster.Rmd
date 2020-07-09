@@ -1,0 +1,170 @@
+---
+title: "poster"
+author: "Tianran Zhang"
+date: "7/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(RColorBrewer)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+file.choose()
+load("../Data/ESP.RData")
+load("../Data/ESP_reg.RData")
+```
+
+# Main predictor: Numeracy
+```{r}
+numeracy <- ESP %>%
+  select(`Competence of Fractions` = JAq1, 
+         `Competence of Percentages` = JAq2, 
+         `Usefulness of Numerical Info` = JAq3) %>%
+  gather() %>%
+  mutate(value = round(value))
+numeracy$`Numeracy Measurement` <- factor(numeracy$key, 
+                                          levels = c("Competence of Fractions",
+                                                     "Competence of Percentages",
+                                                     "Usefulness of Numerical Info"))
+wcm.p <- c("#B31B1B", "#555555", "#FFC72C","#53680C","#E87722")
+
+ggplot(data = numeracy) + 
+  geom_bar(aes(value, group = `Numeracy Measurement`, 
+               fill = `Numeracy Measurement`, 
+               color = `Numeracy Measurement`), 
+           position = "dodge", alpha = .3) + 
+  #scale_fill_brewer(palette = 'Accent') +
+  scale_fill_manual(values = wcm.p[c(3, 5, 1)]) + 
+  scale_color_manual(values = wcm.p[c(3, 5, 1)]) + 
+  xlab("") + 
+  ylab("Count") + 
+  ggtitle("Subjective Numeracy Scales") + 
+  scale_x_discrete(limits=c('1\n(Not at all good/Never)', 2, 3, 4, 5, '6 \n(Extremely good/Very often)')) + 
+  theme_classic() 
+
+ggplot(data = numeracy) + 
+  geom_bar(aes(value, group = `Numeracy Measurement`, 
+               fill = `Numeracy Measurement`, 
+               color = `Numeracy Measurement`), 
+           position = "dodge", alpha = .3) + 
+  #scale_fill_brewer(palette = 'Accent') +
+  scale_fill_manual(values = wcm.p[c(3, 5, 1)]) + 
+  scale_color_manual(values = wcm.p[c(3, 5, 1)]) + 
+  xlab("") + 
+  ylab("Count") + 
+  ggtitle("Subjective Numeracy Scales") + 
+  scale_x_discrete(limits=c('1\n(Not at all good/Never)', 2, 3, 4, 5, '6 \n(Extremely good/Very often)')) + 
+  theme_classic() +
+  theme(legend.position=c(.2, .7), axis.text=element_text(size=8))
+
+# geom_text(aes(label = value)), size = 3, hjust = 0.5, vjust = 3, position = "dodge") 
+```
+
+# Main Outcome: Health Status in ESP
+```{r}
+ESP$`Health Status` <- ESP$health_status_good
+ggplot(data = ESP) + 
+  geom_bar(aes(health_status, group = `Health Status`, 
+               fill = `Health Status`, color = `Health Status`),
+           alpha = .5) +
+  scale_fill_manual(values = wcm.p[c(4, 3)]) + 
+  scale_color_manual(values = wcm.p[c(4, 3)]) + 
+  xlab("") + 
+  ylab("Count") + 
+  ggtitle("Health Status in ESP") + 
+  theme_classic()
+
+
+ggplot(data = ESP) + 
+  geom_bar(aes(health_status, group = `Health Status`, 
+               fill = `Health Status`, color = `Health Status`),
+           alpha = .5) +
+  scale_fill_manual(values = wcm.p[c(4, 3)]) + 
+  scale_color_manual(values = wcm.p[c(4, 3)]) + 
+  xlab("") + 
+  ylab("Count") + 
+  ggtitle("Health Status in ESP") + 
+  theme_classic() + 
+  theme(legend.position=c(.9, .8))
+```
+# Main Outcome: Visits to Care Providers in ESP
+```{r}
+ESP$`Visits Fequency` <- ifelse(ESP$visits == "Never", "Never",
+                             ifelse(ESP$visits %in% 
+                                      c("1-2 times", 
+                                        "Once every few months"), 
+                             "Not Regular", "Regular"))
+ESP$`Visits Fequency` <- factor(ESP$`Visits Fequency`, 
+                             levels = c("Never", "Not Regular", "Regular"))
+ggplot(data = ESP) + 
+  geom_bar(aes(visits, group = `Visits Fequency`, 
+               fill = `Visits Fequency`,
+               color = `Visits Fequency`),
+           alpha = .5) + 
+  # scale_fill_brewer(palette = 'Accent') + 
+  scale_fill_manual(values =wcm.p[c(4, 3, 5)]) + 
+  scale_color_manual(values =wcm.p[c(4, 3, 5)]) +
+  xlab("") + 
+  ylab("Count") + 
+  ggtitle("Visits to Helthcare Providers in ESP") + 
+  theme_classic() + 
+  #labs(fill = "Health Status") +
+  coord_flip()
+
+
+ggplot(data = ESP) + 
+  geom_bar(aes(visits, group = `Visits Fequency`, 
+               fill = `Visits Fequency`,
+               color = `Visits Fequency`),
+           alpha = .5) + 
+  # scale_fill_brewer(palette = 'Accent') + 
+  scale_fill_manual(values =wcm.p[c(4, 3, 5)]) + 
+  scale_color_manual(values =wcm.p[c(4, 3, 5)]) +
+  xlab("") + 
+  ylab("Count") + 
+  ggtitle("Visits to Healthcare Providers in ESP") + 
+  theme_classic() + 
+  #labs(fill = "Health Status") +
+  coord_flip() + 
+  theme(legend.position=c(.9, .6), )
+
+
+```
+
+# Power Calculation
+
+```{r}
+
+
+```
+
+
+# Weights
+```{r}
+
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+wt.income/sum(wt.income)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

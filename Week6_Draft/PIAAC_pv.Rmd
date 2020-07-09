@@ -1,0 +1,166 @@
+---
+title: "piaac"
+author: "Tianran Zhang"
+date: "6/23/2020"
+output:
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+  word_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(knitr)
+library(kableExtra)
+# data manipulation
+library(tidyverse)
+
+# Draw ROC plot
+library(ROCR)
+library(pROC)
+library(simr)
+
+load("../Data/PIAAC_reg.RData")
+```
+
+```{r}
+rocplot <- function(truth, pred, ...){
+  predob = prediction(pred, truth)
+  perf = performance(predob, "tpr", "fpr")
+  plot(perf, colorize=F, ...) 
+  area = auc(truth, pred)
+  area = format(round(area, 4), nsmall = 4)
+  text(x = .8, y = .1, labels = paste("AUC = ", area))
+  segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "gray", lty = 2)
+}
+
+```
+
+
+## PIAAC  
+Health status (Binary):  Good VS. Not Good      
+* Predictor: numeracy1 score        
+* Covariates: education, income, race, ethincity   
+* Additional predictors: literacy1, problem solving    
+
+```{r}
+n1 <- nrow(PIAAC.reg)
+set.seed(135)
+id1 <- sample(n1, n1 * .6)
+PIAAC.training <- PIAAC.reg[id1, ]
+PIAAC.test <- PIAAC.reg[-id1, ]
+
+PIAAC.reg
+```
+
+## Consider numeracy1 as the only predictor    
+
+
+```{r, warning=FALSE}
+varlist2 <- c("numeracy1", "educ", "income.cat", "race", "hisp",
+              "literacy1", "problem_solving1")
+
+full7 <- glm(health_status_good ~ numeracy1 + educ + income.cat +
+               race + hisp, data = PIAAC.reg, family = "binomial")
+final7 <- step(full7, direction = "both", trace = 0)
+# summary(final7)
+fit7 <- glm(health_status_good ~ numeracy1 + educ + income.cat, 
+            data = PIAAC.reg, family = "binomial")
+
+multi_summary7 <- exp(cbind(coef(final7), confint(final7))[-1, ]) %>% as.data.frame()
+colnames(multi_summary7)[1] <- "OR"
+multi_summary7$sig <- ifelse(summary(final7)$coefficients[-1, 4] < 0.05, "*", "")
+
+# power calculation
+power7 <- powerSim(final7, nsim = 100, progress = FALSE)
+auc7 <- auc(PIAAC.reg$health_status_good, predict.glm(final7, PIAAC.reg, type = "response", na.action = na.omit))
+kable(multi_summary7) %>%
+  kable_styling()
+
+# Calculate error rate
+fit7.train <- glm(health_status_good ~ numeracy1 + educ + income.cat, 
+            data = PIAAC.training, family = "binomial")
+pred7 <- predict(fit7.train, PIAAC.test, type = "response")
+pred7 <- ifelse(pred7 > .5, "Not Good", "Good")
+err7 <- mean(pred7 != PIAAC.test$health_status_good)
+```
+
+Step-wise multivariate regression model was conducted on PIAAC data. The final model has three predictors :numeracy1, education and income. The AUC is `r auc7[1]` with a power of `r power7$x/power7$n`. The prediction error rate is `r round(err7, 3)`.    
+
+```{r, message=FALSE}
+# ROC curve
+rocplot(PIAAC.reg$health_status_good, predict.glm(final7, PIAAC.reg, type = "response", na.action = na.omit), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+
+## Consider two additional predictors: literacy1 and Problem solving abilities     
+```{r, warning=FALSE}
+full8 <- glm(health_status_good ~ numeracy1 + educ + income.cat +
+               race + hisp + literacy1 + problem_solving1, 
+             data = PIAAC.reg, family = "binomial")
+final8 <- step(full8, direction = "both", trace = 0)
+# summary(final8)
+fit8 <- glm(health_status_good ~ numeracy1 + educ + income.cat +
+               literacy1 + problem_solving1, data = PIAAC.reg, 
+            family = "binomial")
+# summary(final8)
+multi_summary8 <- exp(cbind(coef(final8), confint(final8))[-1, ]) %>%
+  as.data.frame()
+colnames(multi_summary8)[1] <- "OR"
+multi_summary8$sig <- ifelse(summary(final8)$coefficients[-1, 4] < 0.05, "*", "")
+
+# power calculation
+power8 <- powerSim(final8, nsim = 100, progress = FALSE)
+auc8 <- auc(PIAAC.reg$health_status_good, predict.glm(final8, PIAAC.reg, type = "response", na.action = na.omit))
+kable(multi_summary8) %>%
+  kable_styling()
+
+# Calculate error rate
+fit8.train <- glm(health_status_good ~ numeracy1 + educ + income.cat +
+               problem_solving1, data = PIAAC.training, 
+            family = "binomial")
+pred8 <- predict(fit8.train, PIAAC.test, type = "response")
+pred8 <- ifelse(pred8 > .5, "Not Good", "Good")
+err8 <- mean(pred8 != PIAAC.test$health_status_good)
+```
+
+Step-wise multivariate regression model was conducted. The final model has four predictors: numeracy1, educ, income and problem solving. The AUC is `r auc8[1]` with a power for numeracy1 of `r power8$x/power8$n`. The prediction error rate is `r round(err8, 3)`. 
+
+```{r}
+rocplot(PIAAC.reg$health_status_good, predict.glm(final8, PIAAC.reg, type = "response", na.action = na.omit), title = "ROC plot")
+title(main = "ROC plot")
+```
+
+
+
+# Summary 
+
+## PIAAC
+```{r}
+PIAAC_h1 <- c("health status: Good vs Not Good", round(auc7[1], 3), 
+            power7$x/power7$n, round(err7, 4), "\\*","\\*", "\\*","", "","/", "/")
+PIAAC_h2 <- c("health status: Good vs Not Good", round(auc8[1], 3), 
+            power8$x/power8$n, round(err8, 4), "\\*","\\*", "\\*","", "","\\*", "\\*")
+
+PIAAC.result <- data.frame(PIAAC_h1, PIAAC_h2) %>% 
+  t() %>% 
+  as.data.frame()
+rownames(PIAAC.result) <- NULL
+colnames(PIAAC.result) <- c("Outcome", "AUC", "Power", "Prediction Error Rate",
+                        "numeracy", "educ", "income", "race",
+                        "hisp", "problem solving", "literacy")
+PIAAC.result %>%
+  kable(caption = "PIAAC's multivariates regression summary") %>%
+  kable_styling() %>%
+  add_header_above(c("Response" = 1, "Performance"=3,"Predictor"=1,"Covariates"=4, "Additional Predictor" = 2))
+```
+
+

@@ -1,0 +1,539 @@
+---
+title: "Empire State Poll Analysis - Data Processing"
+author: "Tianran Zhang"
+date: "5/28/2020"
+output:
+  html_document:
+    code_folding: show
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(scipen = 3, digits = 3)
+```
+
+```{r packages}
+# read data
+library(haven)
+library(readxl)
+# data manipulation
+library(tidyverse)
+# knit table
+library(knitr)
+library(kableExtra)
+# data visualization
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+```
+
+# ESP
+
+```{r join data and select variables}
+# load ESP data
+raw_ESP <- read_xlsx("./data/ESP19 JA - Alldata.xlsx")
+# load RVq2 data
+RVq2 <- read_xlsx("./data/ESP19 RV2 - Alldata - Weill Cornell.xlsx")
+
+ESP <- raw_ESP %>%
+  # join ESP data and RVq2 data by using CASEID
+  left_join(RVq2, by=c("CASEID"="CASEID")) %>%
+  # select variables of interest
+  select(CASEID, nysregion, WEIGHT, gender, age, educ, hhinc, hisp, JAq1, JAq2, JAq3, JAq4, RVq2) %>%
+  rename(ID = CASEID, region_weight=WEIGHT)
+```
+
+```{r covariates}
+# recode and collapse (if necessary) levels of demographical covariates
+
+## nys region
+### table(ESP$nysregion, useNA = "ifany")
+ESP <- ESP %>%
+  mutate(nysregion = factor(nysregion, levels = c(1,2), labels = c("Downstate", "Upstate")),
+         region_weight = as.numeric(region_weight))
+
+## gender
+### table(ESP$gender, useNA = "ifany")
+ESP <- ESP %>%
+  mutate(gender = fct_recode(factor(gender), "Male"="1", "Female"="2", "Other"="3", "Refused"="-1")) %>%
+  mutate(gender = factor(gender, levels = c("Male","Female","Other","Refused")))
+
+## age.cat
+ESP <- ESP %>%
+  mutate(age.cat = case_when(
+    age == -1 ~ "Refused",
+    age < 21 ~ "18-20",
+    age < 45 ~ "21-44",
+    age < 65 ~ "45-64",
+    age >= 65 ~ "65+"
+  )) %>%
+  mutate(age.cat = factor(age.cat))
+
+## education
+### table(ESP$educ, useNA = "ifany")
+ESP <- ESP %>%
+  mutate(educ = case_when(
+    educ == -1 ~ "Refused",
+    educ < 4 ~ "High school or less",
+    educ < 6 ~ "Some college or associate's degree",
+    educ < 8 ~ "Bachelor's degree or higher"
+  )) %>%
+  mutate(educ = factor(educ, levels = c("High school or less", "Some college or associate's degree", "Bachelor's degree or higher", "Refused")))
+
+## income
+### table(ESP$hhinc, useNA = "ifany")
+ESP <- ESP %>%
+  mutate(income.cat = case_when(
+    is.na(hhinc) ~ -1, 
+    hhinc < 6 ~ 1,
+    hhinc < 8 ~ 2,
+    hhinc == 8 ~ 3,
+    hhinc == 9 ~ 4
+  )) %>%
+  mutate(income.cat = factor(income.cat, levels = c(1:4,-1), labels = c("<$50k", "$50k-$100k", "$100k-$150k", "$150k+", "No Data")))
+
+## race
+race <- raw_ESP[which(regexpr("race", colnames(raw_ESP))==1)]
+colnames(race) <- c("white", "black", "natam", "asian", "other")
+race[is.na(race)] = 0
+race <- race %>%
+  mutate(count = white+black+natam+asian+other,
+         race = case_when(
+           count >= 2 ~ "More than 1 race",
+           count <= 0 ~ "Refused",
+           white == 1 ~ "White",
+           black == 1 ~ "Black",
+           natam == 1 ~ "Natam",
+           asian == 1 ~ "Asian",
+           other == 1 ~ "Other"),
+         race = factor(race, levels = c("White", "Black", "Asian", "Natam", "More than 1 race", "Other", "Refused")))
+### append the combined race variable to ESP dataset
+ESP$race <- race$race
+
+## ethnicity
+ESP <- ESP %>%
+  mutate(hisp = fct_recode(factor(hisp), "Non-hispanic"="0", "Hispanic"="1", "Refused"="-1")) %>%
+  mutate(hisp = factor(hisp, levels = c("Hispanic", "Non-hispanic", "Refused")))
+```
+
+```{r categorical data summary}
+cat.smry <- function(mat, labels = NULL) {
+  perc <- paste0(round(prop.table(mat)*100,2),"%")
+  n.perc <- paste0(mat,"(",perc,")")
+  if(is.null(labels))
+    names(n.perc) <- names(mat)
+  else
+    names(n.perc) <- labels
+  return(n.perc)
+}
+```
+
+```{r table1}
+ESP.smry <- c(cat.smry(table(ESP$nysregion)),
+              cat.smry(table(ESP$gender)),
+              cat.smry(table(ESP$age.cat)),
+              cat.smry(table(ESP$educ)),
+              cat.smry(table(ESP$income.cat)),
+              cat.smry(table(ESP$race)),
+              cat.smry(table(ESP$hisp)))
+
+ESP.table1 <- data.frame(names(ESP.smry), ESP.smry)
+colnames(ESP.table1) <- c("Demographics", "N(%)")
+ESP.table1 <- rbind(c("NYS region", ""), ESP.table1[1:2,],
+                    c("Gender", ""), ESP.table1[3:6,],
+                    c("Age", ""), ESP.table1[7:11,],
+                    c("Education", ""), ESP.table1[12:15,],
+                    c("Income", ""), ESP.table1[16:20,],
+                    c("Race", ""), ESP.table1[21:27,],
+                    c("Ethnicity", ""), ESP.table1[28:30,])
+kable(ESP.table1, row.names = F) %>%
+  kable_styling(full_width = F) %>%
+  row_spec(c(1,4,9,15,20,26,34), bold = T)
+```
+
+```{r numeracy score}
+# count the number of "incorrect" answers to JAq1,2,3 for filtering
+# "incorrect" refers to the answers with negative values
+ESP <- ESP %>%
+  mutate(wrong.num = as.integer((JAq1<=0)+(JAq2<=0)+(JAq3<=0)))
+# filter the participants with more than half "correct" answers
+SNS <- ESP[which(ESP$wrong.num<=1),c("JAq1","JAq2","JAq3")]
+# we will only lose 2 participants with more than half "incorrect" answers
+## dim(SNS)
+# calculate the average score of the "correct" answers in SNS data frame for imputation
+imp <- mean(unlist(SNS*(SNS>0)))
+
+ESP <- ESP %>%
+  # imputate the negative values with imp=4.74
+  mutate(JAq1 = ifelse(JAq1<0, imp, JAq1),
+         JAq2 = ifelse(JAq2<0, imp, JAq2),
+         JAq3 = ifelse(JAq3<0, imp, JAq3)) %>%
+  # add the numeracy variable into ESP dataset; numeracy = JAq1+JAq2+JAq3
+  mutate(numeracy = JAq1+JAq2+JAq3)
+```
+
+```{r health score}
+# collapse health status (JAq4) into two levels
+ESP <- ESP %>%
+       # "Not Poor" = ("Excellent","Very Good","Good","Fair"), "Poor" = ("Poor")
+  mutate(health_status_1 = ifelse(JAq4<=4, "Not Poor", "Poor"), 
+       # "Good" = ("Excellent","Very Good","Good"), "Not Good" = ("Fair","Poor")
+         health_status_2 = ifelse(JAq3<=3, "Good", "Not Good")) %>% 
+       # set the reference level of health_status_1 as Poor
+  mutate(health_status_1 = relevel(factor(health_status_1), "Poor"), 
+       # set the reference level of health_status_2 as Not Good
+         health_status_2 = relevel(factor(health_status_2), "Not Good"), 
+       # recode JAq4 (health score) to health levels
+         health_status = factor(JAq4, levels = c(1:5), labels = c("Excellent", "Very Good","Good","Fair", "Poor")))
+
+# median(ESP$JAq4)
+ESP %>%
+  ggplot() +
+  # draw the basic bar plot
+  geom_bar(aes(x = health_status), stat = "count", fill = "white", color = "black") +
+  # add the count label to each bar
+  geom_text(stat = "count", aes(x = health_status, label = ..count..), 
+            position = position_stack(vjust = 0.5), size = 3.2) +
+  # add a vertical dash line showing the position of median health score
+  # the median level is 3: Good
+  # the first half of the sample is made up of:
+    # 107 excellent + 246 very good + 47 good
+    # 47 is about 1/6 of the whole "good" group
+  # thus the position of the dash line is at about 1/6 of the bar of "good"
+  geom_vline(xintercept = 2.7, linetype = "longdash", color = "red") +
+  theme_bw() +
+  labs(x = NULL, y = NULL,
+       title = "Health score")
+```
+
+```{r visits}
+# recode levels of care provider visit frequency (RVq2)
+## table(ESP$RVq2, useNA = "ifany")
+ESP <- ESP %>%
+  mutate(visits = factor(RVq2, levels = 1:7, labels = c("Never", "1-2 times", "Once every few months", "Once a month", "Twice a month", "Once a week", "2-3 times a week")),
+         visit_often = factor(ifelse(RVq2>=3, 1, 0)))
+
+# median(ESP$RVq2)
+ESP %>%
+  ggplot() +
+  # draw the basic bar plot
+  geom_bar(aes(x = visits), stat = "count", fill = "white", color = "black") +
+  # add the count label to each bar
+  geom_text(stat = "count", aes(x = visits, label = ..count..), position = position_stack(vjust = 0.5), size = 3.2) +
+  # add a vertical dash line showing the position of median visit level
+  # the median level is 3: once every few month
+  # the first half of the sample is made up of:
+    # 72 never + 237 1-2 times + 91 once every few month
+    # 91 is about 1/3 of the whole "once every few month" group
+  # thus the position of the dash line is at about 1/3 of the bar of "once every few month
+  geom_vline(xintercept = 2.85,linetype = "longdash", color = "red") +
+  theme_bw() +
+  # rotate the x-axis labels to avoid overlap
+  theme(axis.text.x = element_text(angle = 20, hjust = 1)) +
+  labs(x = NULL, y = NULL, 
+       title = "Care provider visits in the past 12 months")
+
+```
+
+
+```{r finish processing}
+# reorder columns and save as RData file
+ESP <- ESP %>%
+  select(ID, nysregion, region_weight, gender, age, age.cat, educ, income.cat, race, hisp, JAq1, JAq2, JAq3, numeracy, wrong.num, JAq4, health_status, health_status_1, health_status_2, RVq2, visits, visit_often)
+save(ESP, file = "./data/ESP.RData")
+## load("./data/ESP.RData")
+## View(ESP)
+```
+
+```{r prepare ESP data for regression}
+ESP.reg <- ESP %>%
+  filter(age.cat != "Refused",
+         educ != "Refused",
+         income.cat != "No Data",
+         wrong.num < 2) %>%
+  mutate(race = fct_collapse(race, 
+                             White="White", 
+                             Black="Black",
+                             other_level = "Other"),
+         age.cat = factor(age.cat, levels = c("18-20", "21-44", "45-64", "65+")),
+         educ = factor(educ, levels = c("High school or less", "Some college or associate's degree", "Bachelor's degree or higher")),
+         income.cat = factor(income.cat, levels = c("<$50k", "$50k-$100k", "$100k-$150k", "$150k+")),
+         # the "Refuse" in gender were dropped because of other variables
+         gender = factor(gender, levels = c("Male", "Female", "Other"))) %>%
+  select(nysregion, region_weight, gender, age.cat, educ, income.cat, race, hisp, numeracy, JAq4, health_status, health_status_1, health_status_2, RVq2, visits, visit_often)
+# dim(ESP.reg)
+save(ESP.reg, file = "./data/ESP_reg.RData")
+```
+
+```{r boxplot with ANOVA test}
+# produce all the pairs within a categorical vector
+produce.full.comp <- function(x) {
+  x <- as.factor(x)
+  n <- nlevels(x)
+  l <- levels(x)
+  comp <- list()
+  k <- 0
+  for(i in 1:(n-1)) {
+    for(j in (i+1):n) {
+      k <- k+1
+      comp[[k]] <- l[c(i,j)]
+    }
+  }
+  return(comp)
+}
+
+# draw the distribution of numeracy score by covariates (x)
+boxplot.test <- function(x, y = "numeracy", data = ESP.reg, method = "anova", comp = NULL,
+                         title = NULL, xlab = "", ylab = "", label.y = 25, legend = "") {
+  if(is.null(title))
+    title <- paste0("Numeracy distribution by ", x)
+  if(is.null(comp))
+    comp <- produce.full.comp(unlist(data[x]))
+  p <- ggboxplot(data=data, x=x, y=y, color=x, palette = "jco", legend=legend,
+                 title = title, xlab=xlab, ylab=ylab) +
+    stat_compare_means(comparisons = comp) +
+    stat_compare_means(label.y = label.y, method = method)
+  return(p)
+}
+boxplot.test("health_status", label.y = 35)
+```
+
+```{r numeracy distribution by each covariates}
+boxplot.test("gender")
+boxplot.test("age.cat")
+boxplot.test("educ")
+boxplot.test("income.cat")
+boxplot.test("race")
+boxplot.test("hisp")
+```
+
+# NYS
+
+```{r NYS}
+NYS_age_gender <- read_xlsx("./data/nys_age_gender.xlsx", range = "A29:G32", col_names = F)
+
+NYS.gender <- cat.smry(c(sum(NYS_age_gender[,4]), sum(NYS_age_gender[,6])), labels = c("Male", "Female"))
+NYS.age <- cat.smry(unlist(NYS_age_gender[,2]), labels = levels(ESP$age.cat)[1:4])
+
+NYS_educ <- read_xlsx("./data/nys_educ.xlsx", range = "C6:Q8")[2,] %>% unlist()
+NYS.educ <- sapply(list(1:8, 9:11, 12:15), function(x) sum(NYS_educ[x])) %>% cat.smry(labels = levels(ESP$educ)[1:3])
+
+# here actually the first two levels of income for NYS is under 15k and 15k-50k
+NYS_income <- read_xls("./data/nys_income.xls", range = "D7:L7", col_names = F) %>% unlist()
+NYS.income <- sapply(list(1:4, 3:6, 7, 8:9), function(x) round(sum(NYS_income[x])/100*128579)) %>% cat.smry(labels = c("<$50k", "$50k-$100k", "$100k-$150k", "$150k+"))
+
+# collapse asian alone and native hawaiian and other pacific islander alone together as asian https://www.census.gov/quickfacts/NY
+NYS.race <- cat.smry(round(c(0.697,0.176,0.127)*19453561/1000), labels = c("White", "Black", "Other"))
+NYS.hisp <- cat.smry(c(41217,250263-41217), labels = c("Hispanic", "Non-hispanic"))
+
+# gather all the cat.smry result for NYS population
+NYS.smry <- c(NYS.gender, NYS.age, NYS.educ, NYS.income, NYS.race, NYS.hisp)
+
+# extract counts from NYS.smry
+NYS.n <- c()
+NYS.perc <- c()
+for(i in 1:length(NYS.smry)) {
+  n.perc <- NYS.smry[i]
+  n <- substr(n.perc, 1, unlist(gregexpr("\\(",n.perc))-1)
+  NYS.n <- c(NYS.n, n)
+  perc <- substr(n.perc, unlist(gregexpr("\\(",n.perc))+1, unlist(gregexpr("\\%",n.perc))-1)
+  NYS.perc <- c(NYS.perc, perc)
+}
+NYS.n <- as.numeric(NYS.n)
+NYS.perc <- as.numeric(NYS.perc)/100
+
+# save NYS population demographical summary as an RData file
+NYS <- data.frame(counts = NYS.n, percentage = NYS.perc, n_perc = NYS.smry)
+save(NYS, file = "./data/NYS.RData")
+## load("./data/NYS.RData")
+## View(NYS)
+```
+
+```{r NYS vs. EPS}
+# gather all the cat.smry result for ESP sample
+ESP.smry <- c(cat.smry(table(ESP.reg$gender)),
+              cat.smry(table(ESP.reg$age.cat)),
+              cat.smry(table(ESP.reg$educ)),
+              cat.smry(table(ESP.reg$income.cat)),
+              cat.smry(table(ESP.reg$race)),
+              cat.smry(table(ESP.reg$hisp)))
+
+# join NYS.smry and ESP.smry together (drop levels such as "No data" and "Refused" which are unique for ESP sample by left join NYS)
+comp1 <- data.frame(Demographics = rownames(NYS), NYS = NYS$n_perc) %>%
+  left_join(data.frame(d = names(ESP.smry)[-3], ESP = ESP.smry[-3]), by = c("Demographics" = "d"))
+
+# extract counts from ESP.smry
+ESP.smry <- comp1$ESP
+ESP.n <- c()
+for(i in 1:length(ESP.smry)) {
+  n.perc <- ESP.smry[i]
+  n <- substr(n.perc, 1, unlist(gregexpr("\\(",n.perc))-1)
+  ESP.n <- c(ESP.n, n)
+}
+ESP.n <- as.numeric(ESP.n)
+# bind the counts of ESP and NYS preparing for fisher's test
+fisher.mat <- rbind(ESP.n, unlist(NYS$counts)) %>% as.matrix()
+
+
+# add subtitles of demographics
+comp1 <- rbind(c("Gender", "", ""), comp1[1:2,],
+              c("Age", "", ""), comp1[3:6,],
+              c("Education", "", ""), comp1[7:9,],
+              c("Income", "", ""), comp1[10:13,],
+              c("Race", "", ""), comp1[14:16,],
+              c("Ethnicity", "", ""), comp1[17:18,]) %>% as.data.frame()
+
+# append p-values of fisher's test
+comp1$pval <- sapply(list(1:2,3:6,7:9,10:13,14:16,17:18), 
+                     function(x){
+                       mat <- fisher.mat[,x]
+                       # pval <- fisher_test(mat)$p.value
+                       # pval <- fisher.multcomp(mat)$p.signif
+                       pval <- fisher.test(mat, simulate.p.value = T)$p.value
+                       pval <- ifelse(pval<0.001, "<0.001", round(pval,3))
+                       c(pval, rep("",length(x)))
+                       }) %>% unlist()
+
+kable(comp1, row.names = F) %>% 
+  kable_styling(full_width = F) %>%
+  row_spec(c(1,4,9,13,18,22), bold = T)
+```
+
+# PIAAC
+
+```{r load PIAAC}
+raw_PIAAC <- read_spss("./data/prgusap1_puf.sav")
+PIAAC <- raw_PIAAC %>%
+  select(I_Q08, B_Q01A, J_Q09USX, RACETHN_5CAT) %>%
+  rename(health_score = I_Q08, # outcome
+         educ = B_Q01A, income.cat = J_Q09USX, race = RACETHN_5CAT) # covariates
+```
+
+```{r PVs}
+# seperately extract the plausible values
+numeracy <- raw_PIAAC[which(regexpr("PVNUM", colnames(raw_PIAAC))==1)]
+literacy <- raw_PIAAC[which(regexpr("PVLIT", colnames(raw_PIAAC))==1)]
+problem_solving <- raw_PIAAC[which(regexpr("PVPSL", colnames(raw_PIAAC))==1)]
+# check the distribution of participants' missing values
+lapply(list(numeracy, literacy, problem_solving), 
+       function(x) table(rowSums(is.na(x))))
+# check the overlap of missing value between literacy and numeracy
+sum(which(rowSums(is.na(literacy))==10) %in% which(rowSums(is.na(numeracy))==10))
+# ... problem_solving and numeracy
+sum(which(rowSums(is.na(problem_solving))==10) %in% which(rowSums(is.na(numeracy))==10))
+# ... literacy and problem_solving
+sum(which(rowSums(is.na(literacy))==10) %in% which(rowSums(is.na(problem_solving))==10))
+# health_score and numeracy
+table(which(is.na(PIAAC$health_score)) %in% which(rowSums(is.na(numeracy))==10))
+
+
+PIAAC$numeracy1 <- rowMeans(numeracy)
+PIAAC$literacy1 <- rowMeans(literacy)
+PIAAC$problem_solving1 <- rowMeans(problem_solving)
+
+PIAAC$numeracy <- numeracy[1]
+PIAAC$literacy <- literacy[1]
+PIAAC$problem_solving <- problem_solving[1]
+```
+
+Missing data can occur when some of the adults selected in the sample are not accessible or refuse to participate, when they fail to respond to a particular survey item, or, because data collected from the sampled adults are contaminated or lost during or after the data collection phase. 
+
+```{r recode variables}
+# 185 out of 3660 obs have NA for health score, 181 of which have NA for all variables
+nrow(PIAAC)
+healthNA <- PIAAC %>%
+  filter(is.na(health_score)) %>%
+  rowSums(na.rm = T)
+
+# drop NAs in health_score, finally we have 3475 obs at this time
+PIAAC <- PIAAC %>%
+  filter(!is.na(health_score))
+nrow(PIAAC)
+
+# recode and collapse (if necessary) levels of demographical variables
+
+## education
+### table(PIAAC$educ, useNA = "ifany")
+PIAAC <- PIAAC %>%
+  mutate(educ = case_when(
+    educ <= 7 ~ "High school or less",
+    educ <= 11 ~ "Some college or associate's degree",
+    educ <= 15 ~ "Bachelor's degree or higher",
+    is.na(educ) ~ "Unknown"
+  )) %>%
+  mutate(educ = factor(educ, levels = c("High school or less", "Some college or associate's degree", "Bachelor's degree or higher", "Unknown")))
+
+## income
+### table(PIAAC$income.cat, useNA = "ifany")
+PIAAC <- PIAAC %>%
+  mutate(income.cat = case_when(
+    is.na(income.cat) ~ -1, 
+    income.cat < 6 | income.cat == 11 ~ 1,
+    income.cat < 9 ~ 2,
+    income.cat == 9 ~ 3,
+    income.cat == 10 ~ 4
+  )) %>%
+  mutate(income.cat = factor(income.cat, levels = c(1:4,-1), labels = c("<$50k", "$50k-$100k", "$100k-$150k", "$150k+", "No Data")))
+
+## race/ethnicity
+### table(PIAAC$race_ethnicity, useNA = "ifany")
+PIAAC <- PIAAC %>%
+  mutate(race = case_when(
+    is.na(race) ~ "Unknown",
+    race == 1 ~ "Hispanic",
+    race == 2 ~ "White",
+    race == 3 ~ "Black",
+    race == 4 ~ "Asian/pacific islander",
+    race == 6 ~ "Other"
+  )) %>%
+  mutate(race = factor(race, levels = c("White", "Black", "Asian/pacific islander", "Hispanic", "Other", "Unknown")))
+
+PIAAC <- PIAAC %>%
+  mutate(hisp = fct_collapse(race,
+                             Hispanic = "Hispanic",
+                             other_level = "Non-Hispanic")) %>%
+  mutate(hisp = factor(hisp, levels = c("Hispanic", "Non-Hispanic")))
+
+PIAAC <- PIAAC %>%
+  mutate(race = fct_collapse(race,
+                             White = "White",
+                             Black = "Black", 
+                             other_level = "Other"))
+
+## collapse health status into two levels
+### table(PIAAC$health_score, useNA = "ifany")
+PIAAC <- PIAAC %>%
+  mutate(health_status = case_when(
+    health_score == 1 ~ "Excellent",
+    health_score == 2 ~ "Very Good",
+    health_score == 3 ~ "Good",
+    health_score == 4 ~ "Fair",
+    health_score == 5 ~ "Poor"
+  )) %>%
+  mutate(health_status = factor(health_status, levels = c("Excellent", "Very Good","Good","Fair", "Poor")),
+         health_status_1 = fct_collapse(health_status, `Not Poor` = c("Excellent","Very Good","Good","Fair"), Poor = c("Poor")),
+         health_status_2 = fct_collapse(health_status, Good = c("Excellent","Very Good","Good"), `Not Good` = c("Fair","Poor"))) %>%
+  mutate(health_status_1 = factor(health_status_1, levels = c("Not Poor", "Poor")),
+         health_status_2 = factor(health_status_2, levels = c("Good", "Not Good")))
+
+save(PIAAC, file = "./data/PIAAC.RData")
+```
+
+
+
+```{r}
+PIAAC_reg <- PIAAC %>% filter(educ != "Unknown", income.cat != "No Data", !is.na(problem_solving))
+PIAAC_reg <- PIAAC_reg %>%
+  mutate(educ = factor(educ, levels = c("High school or less", "Some college or associate's degree", "Bachelor's degree or higher")),
+         income.cat = factor(income.cat, levels = c("<$50k", "$50k-$100k", "$100k-$150k", "$150k+")))
+dim(PIAAC_reg)
+save(PIAAC_reg, file = "./data/PIAAC_reg.RData")
+```
+
