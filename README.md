@@ -11,7 +11,6 @@ Conclusion: higher nueracy is related to better health:
 2. For healthcare-provider visits, in males, higher numeracy is related to less helthcare-provider visits controlling other covariates in ESP study. In females, 
 there is no significant association between numeracy and healthcare-provider visits in ESP study.
 
-
-Notes:
-The professional report has been submitted to Journal – Patient Education and Counseling (Short Communication).
+Notes:         
+The professional report has been submitted to Journal – Patient Education and Counseling (Short Communication).       
 The whole poster can be find here: https://creatran.github.io/project/capstone/Capstone_Poster.pdf.
